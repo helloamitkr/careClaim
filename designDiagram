@@ -1,0 +1,138 @@
+                                      ┌─────────────────────────────────────────┐
+                                      │                Frontend                 │
+                                      │-----------------------------------------│
+                                      │ React / Next.js                         │
+                                      │ • Patient Dashboard                     │
+                                      │ • Case Timeline                         │
+                                      │ • Agent Decisions                       │
+                                      │ • Human Review                          │
+                                      │ • Audit Logs                            │
+                                      └─────────────────┬───────────────────────┘
+                                                        │ HTTPS
+                                                        ▼
+                         ┌─────────────────────────────────────────────────────────────┐
+                         │                  Backend API (Go)                           │
+                         │-------------------------------------------------------------│
+                         │ REST API                                                    │
+                         │ Authentication (JWT)                                        │
+                         │ Request Validation                                          │
+                         │ Rate Limiter                                                │
+                         │ Guardrails                                                  │
+                         │ Correlation ID / Request ID                                 │
+                         └──────────────┬──────────────────────────────────────────────┘
+                                        │
+                                        ▼
+                    ┌───────────────────────────────────────────┐
+                    │        AI Workflow Orchestrator           │
+                    │-------------------------------------------│
+                    │ • Creates workflow                        │
+                    │ • Executes agents                         │
+                    │ • Aggregates responses                    │
+                    │ • Confidence Router                       │
+                    │ • Final Decision                          │
+                    └───────┬───────────┬───────────┬───────────┘
+                            │           │           │
+        ────────────────────┼───────────┼───────────┼────────────────────
+                            │           │           │
+                            ▼           ▼           ▼
+                 ┌──────────────┐ ┌──────────────┐ ┌──────────────┐
+                 │ Referral     │ │ Medication   │ │ Follow-up    │
+                 │ Agent        │ │ Agent        │ │ Agent        │
+                 └──────┬───────┘ └──────┬───────┘ └──────┬───────┘
+                        │                │                │
+                        ▼                ▼                ▼
+              PostgreSQL KB     PostgreSQL KB     PostgreSQL KB
+              (Insurance)       (Medication)      (Scheduling)
+
+                            ▼
+                    ┌────────────────────┐
+                    │ Outreach Agent     │
+                    └─────────┬──────────┘
+                              ▼
+                     PostgreSQL Templates
+
+                            ▼
+                    ┌────────────────────┐
+                    │ Readiness Agent    │
+                    └─────────┬──────────┘
+                              ▼
+                    PostgreSQL Policies
+
+──────────────────────────────────────────────────────────────────────────────
+
+                      Shared PostgreSQL Knowledge Base
+
+              ┌─────────────────────────────────────────────┐
+              │ medication_guidelines                       │
+              │ insurance_network                           │
+              │ followup_rules                              │
+              │ discharge_policies                          │
+              │ outreach_templates                          │
+              │ risk_rules                                  │
+              └─────────────────────────────────────────────┘
+
+──────────────────────────────────────────────────────────────────────────────
+
+                    Guardrails (Before & After Every Agent)
+
+            ✔ Required fields present
+            ✔ JSON schema validation
+            ✔ Prompt injection detection
+            ✔ Hallucination prevention
+            ✔ Response format validation
+            ✔ PII masking
+            ✔ Confidence threshold check
+
+──────────────────────────────────────────────────────────────────────────────
+
+                           Observability
+
+        Structured Logs
+        ───────────────────────────────
+        Request ID
+        Agent Name
+        Prompt
+        Retrieved KB rows
+        LLM Response
+        Tokens
+        Latency
+        Confidence
+        Final Decision
+
+                        │
+                        ▼
+
+               OpenTelemetry / Loki
+                        │
+                        ▼
+                  Grafana Dashboard
+
+        • Request Volume
+        • Agent Latency
+        • Success Rate
+        • Auto Complete %
+        • Needs Review %
+        • Reject %
+        • Token Usage
+        • Errors
+        • LLM Cost
+        • Confidence Distribution
+
+──────────────────────────────────────────────────────────────────────────────
+
+                      Human Review Dashboard
+
+                 Needs Review Queue
+                        │
+        Care Manager Approves / Rejects / Overrides
+                        │
+                        ▼
+                  Audit Trail Stored
+
+──────────────────────────────────────────────────────────────────────────────
+
+                     Final Response
+
+        Auto Complete
+        Needs Review
+        Reject

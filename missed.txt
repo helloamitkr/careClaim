@@ -1,0 +1,148 @@
+                        Next.js Frontend
+                               │
+                               ▼
+                    FastAPI Backend (Python)
+                               │
+     ┌─────────────────────────┼──────────────────────────┐
+     │                         │                          │
+     ▼                         ▼                          ▼
+Authentication          Rate Limiter              Request Validator
+     │                         │                          │
+     └─────────────────────────┴──────────────────────────┘
+                               │
+                               ▼
+                         Guardrails Layer
+                               │
+                               ▼
+                    LangGraph Workflow Engine
+                               │
+     ┌───────────────┬──────────────┬──────────────┬──────────────┐
+     ▼               ▼              ▼              ▼              ▼
+ Referral        Medication     Follow-up      Outreach     Readiness
+  Agent            Agent          Agent          Agent         Agent
+     │               │              │              │              │
+     ▼               ▼              ▼              ▼              ▼
+ PostgreSQL      PostgreSQL     PostgreSQL    PostgreSQL    PostgreSQL
+ Insurance       Medication      Follow-up     Templates      Policies
+                               Knowledge
+     └───────────────┬──────────────┬──────────────┬──────────────┘
+                     ▼
+             Confidence Router
+                     │
+      Auto Complete / Needs Review / Reject
+                     │
+                     ▼
+              Human Review Queue
+                     │
+                     ▼
+               PostgreSQL Storage
+
+──────────────────────────────────────────────
+
+Logging
+
+FastAPI
+   │
+   ▼
+Loguru
+   │
+   ▼
+OpenTelemetry
+   │
+   ▼
+Grafana + Loki + Prometheus
+
+---------------------------------
+
+hospital-ai/
+
+backend/
+│
+├── app/
+│   ├── api/
+│   ├── agents/
+│   │   ├── referral.py
+│   │   ├── medication.py
+│   │   ├── followup.py
+│   │   ├── outreach.py
+│   │   └── readiness.py
+│   │
+│   ├── orchestrator/
+│   │   ├── workflow.py
+│   │   ├── router.py
+│   │   └── confidence.py
+│   │
+│   ├── rag/
+│   │   ├── postgres.py
+│   │   ├── medication.py
+│   │   ├── insurance.py
+│   │   └── policy.py
+│   │
+│   ├── guardrails/
+│   │   ├── input.py
+│   │   ├── output.py
+│   │   ├── hallucination.py
+│   │   └── pii.py
+│   │
+│   ├── database/
+│   ├── middleware/
+│   ├── models/
+│   ├── schemas/
+│   ├── services/
+│   ├── logging/
+│   └── telemetry/
+│
+├── tests/
+├── docker/
+└── requirements.txt
+--------------------------------
+Start
+  │
+  ▼
+Validate Input
+  │
+  ▼
+Referral Agent
+  │
+  ▼
+Medication Agent
+  │
+  ▼
+Follow-up Agent
+  │
+  ▼
+Outreach Agent
+  │
+  ▼
+Readiness Agent
+  │
+  ▼
+Confidence Router
+  │
+  ├── Auto Complete
+  ├── Needs Review
+  └── Reject
+
+
+
+---------------------
+  Patient JSON
+      │
+      ▼
+Guardrails
+      │
+      ▼
+Referral Agent
+Medication Agent
+Follow-up Agent
+Outreach Agent
+      │
+      ▼
+Readiness Agent
+      │
+      ▼
+Confidence Router
+      │
+      ├── Auto Complete
+      ├── Needs Review
+      └── Reject

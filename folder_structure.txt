@@ -1,0 +1,117 @@
+/agents
+
+    referral.go
+
+    medication.go
+
+    followup.go
+
+    readiness.go
+
+/rag
+
+    embed.go
+
+    search.go
+
+    postgres.go
+
+/knowledge
+
+    medication.json
+
+    insurance.json
+
+    followup.json
+
+    policies.json
+
+
+
+    ------RAG-----
+
+    Category
+
+hospital_policy
+
+Title
+
+Post Appendectomy Discharge
+
+Content
+
+Patients may be discharged home if:
+
+• pain controlled
+
+• tolerating diet
+
+• afebrile
+
+• incision clean
+
+• follow-up within 14 days
+
+
+Category
+
+medication
+
+Title
+
+Appendectomy Instructions
+
+Content
+
+Acetaminophen
+
+Ibuprofen
+
+Keep incision dry
+
+Avoid heavy lifting
+
+Watch for fever
+
+
+
+Category
+
+insurance
+
+Title
+
+Cigna Network
+
+Content
+
+General Surgery
+
+Cardiology
+
+Neurology
+
+Pulmonology
+
+
+
+Why I recommend this design
+
+Instead of maintaining five or six separate tables, you have one knowledge repository with different categories:
+
+medication
+followup
+insurance
+policy
+risk
+outreach
+
+Each agent simply retrieves the row(s) it needs:
+
+Medication Agent → category='medication'
+Referral Agent → category='insurance'
+Follow-Up Agent → category='followup'
+Readiness Agent → category='policy' + category='risk'
+Outreach Agent → category='outreach'
+
+This keeps the schema simple while still giving you a clean retrieval layer that you can later evolve into a vector-based RAG solution if your knowledge becomes larger or more free-form.
