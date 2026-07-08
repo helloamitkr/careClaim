@@ -97,33 +97,42 @@ class Database:
         Base.metadata.create_all(self.engine)
         self.apply_security_policies()
 
+    # Both depend on `cases`, so drop_all cannot proceed while they exist, and
+    # both are recreated by apply_security_policies().
+    _PORTAL_VIEWS = ("portal.portal_case_reason_view", "portal.portal_case_view")
+
+    # Re-applied in order after every create_all(). 006 grants on agent_decisions,
+    # which create_all() recreates without them, so it must run again too.
+    _SECURITY_MIGRATIONS = ("003_rls_and_portal_view.sql", "006_portal_reason_view.sql")
+
     def _drop_portal_view(self) -> None:
         try:
             with self.engine.begin() as conn:
-                conn.execute(text("DROP VIEW IF EXISTS portal.portal_case_view"))
+                for view in self._PORTAL_VIEWS:
+                    conn.execute(text(f"DROP VIEW IF EXISTS {view}"))
         except (ProgrammingError, OperationalError):
             pass  # no portal schema yet, or no rights — drop_all will tell us
 
     def apply_security_policies(self) -> None:
-        """Re-apply dbmigration/003_rls_and_portal_view.sql after any create_all().
+        """Re-apply the RLS + portal-view migrations after any create_all().
 
-        DROP TABLE takes its RLS policies and the portal view down with it, so a
-        reset_schema() in a test would silently leave the portal's row-level
-        security switched off — the worst kind of failure, because everything
-        keeps working. Re-running the (idempotent) DDL here means the boundary
-        cannot be lost by accident.
+        DROP TABLE takes its RLS policies, the portal views, and their grants down
+        with it, so a reset_schema() in a test would silently leave the portal's
+        row-level security switched off — the worst kind of failure, because
+        everything keeps working. Re-running the (idempotent) DDL here means the
+        boundary cannot be lost by accident.
 
         No-ops with a warning when the roles from step 002 have not been created
         yet, so a fresh clone still starts.
         """
-        sql_path = (
-            Path(__file__).resolve().parents[3] / "dbmigration" / "003_rls_and_portal_view.sql"
-        )
-        if not sql_path.exists():
-            return
+        migrations = Path(__file__).resolve().parents[3] / "dbmigration"
         try:
-            with self.engine.begin() as conn:
-                conn.execute(text(sql_path.read_text()))
+            for filename in self._SECURITY_MIGRATIONS:
+                sql_path = migrations / filename
+                if not sql_path.exists():
+                    continue
+                with self.engine.begin() as conn:
+                    conn.execute(text(sql_path.read_text()))
         except (ProgrammingError, OperationalError) as exc:
             logger.bind(component="db").warning(
                 "row-level security NOT applied ({err}). The patient portal must "

@@ -492,7 +492,7 @@ async def approve_case(case_id: str, body: schemas.ApproveRequest) -> schemas.Wo
     actor = workflow.Actor(username=body.username, role=body.role)
     with app.state.db.Session() as session:
         try:
-            wf = workflow.approve(session, case_id, actor, body.summary_text)
+            workflow.approve(session, case_id, actor, body.summary_text)
         except workflow.NotPermitted as exc:
             raise HTTPException(status_code=403, detail=str(exc))
         except workflow.WrongStage as exc:
@@ -576,39 +576,6 @@ async def submit_doctor_review(
     return schemas.WorkflowActionOut(
         case_id=case_id, stage=workflow.Stage.AWAITING_ADMIN.value, assigned_reviewer=None
     )
-
-
-@app.get("/api/patients/search", response_model=list[schemas.PatientSearchResultOut])
-async def search_patients(q: str = "", limit: int = 20) -> list[schemas.PatientSearchResultOut]:
-    """Clinician patient lookup. Matches on patient_id or diagnosis, and returns
-    one row per patient — their most recently updated case."""
-    needle = q.strip().lower()
-    with app.state.db.Session() as session:
-        rows = (
-            session.query(CaseRecord).order_by(CaseRecord.updated_at.desc()).all()
-        )
-
-    latest: dict[str, CaseRecord] = {}
-    counts: dict[str, int] = {}
-    for row in rows:
-        diagnosis = str(row.snapshot.get("primary_diagnosis", ""))
-        if needle and needle not in row.patient_id.lower() and needle not in diagnosis.lower():
-            continue
-        counts[row.patient_id] = counts.get(row.patient_id, 0) + 1
-        latest.setdefault(row.patient_id, row)  # rows are newest-first
-
-    return [
-        schemas.PatientSearchResultOut(
-            patient_id=pid,
-            case_count=counts[pid],
-            latest_case_id=row.case_id,
-            latest_status=row.status,
-            primary_diagnosis=str(row.snapshot.get("primary_diagnosis", "")),
-            discharge_date=row.snapshot.get("discharge_date"),
-            updated_at=row.updated_at,
-        )
-        for pid, row in list(latest.items())[: max(1, min(limit, 100))]
-    ]
 
 
 @app.get("/api/cases/{case_id}/draft", response_model=schemas.DraftSummaryOut)

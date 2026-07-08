@@ -191,18 +191,6 @@ class WorkflowActionOut(BaseModel):
     assigned_reviewer: str | None = None
 
 
-class PatientSearchResultOut(BaseModel):
-    """One patient in the clinician's search results, with their latest case."""
-
-    patient_id: str
-    case_count: int
-    latest_case_id: str
-    latest_status: str
-    primary_diagnosis: str
-    discharge_date: str | None = None
-    updated_at: datetime
-
-
 class DraftSectionOut(BaseModel):
     """One agent's contribution to the discharge summary draft."""
 

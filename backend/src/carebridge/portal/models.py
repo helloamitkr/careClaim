@@ -35,6 +35,8 @@ class PortalUser(PortalBase):
     email_encrypted: Mapped[bytes] = mapped_column(LargeBinary, nullable=False)
     email_hmac: Mapped[bytes] = mapped_column(LargeBinary, nullable=False, unique=True)
     status: Mapped[str] = mapped_column(String, nullable=False, default="invited")
+    # Vestigial: nothing increments it. Login is a passwordless magic link, so
+    # there is no credential to brute-force. Lockout is `status != 'active'`.
     failed_logins: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
     last_login_at: Mapped[datetime | None] = mapped_column(DateTime(timezone=True))
     created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
@@ -74,6 +76,9 @@ class PortalSession(PortalBase):
     # Denormalised from portal_user on purpose: this column *is* the
     # authorization key, and a join is one more place to get it wrong.
     patient_id: Mapped[str] = mapped_column(String, nullable=False)
+    # Populated, never read. CSRF is SameSite=Strict only — see auth.py. This is
+    # where a real double-submit check would start if a cookie-authenticated
+    # state-changing route ever appears.
     csrf_token: Mapped[str] = mapped_column(String, nullable=False)
     issued_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))
     last_seen_at: Mapped[datetime] = mapped_column(DateTime(timezone=True))

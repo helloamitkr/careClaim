@@ -26,7 +26,7 @@ def test_confidence_ordering_matches_case_severity():
 
 async def test_agent_wired_to_bus_emits_referral_routed_event():
     bus = EventBus()
-    agent = ReferralRoutingAgent(bus)
+    ReferralRoutingAgent(bus)  # constructing it is what subscribes it to the bus
     received = []
 
     async def capture(event: Event) -> None:

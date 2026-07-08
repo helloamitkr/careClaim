@@ -84,6 +84,22 @@ class PortalCaseOut(BaseModel):
         )
 
 
+class ChatMessageIn(BaseModel):
+    """One turn. Deliberately stateless — no history, no conversation id.
+
+    Without history there is nothing for a multi-turn jailbreak to accumulate in,
+    and every message meets the clinical-question filter on its own."""
+
+    message: str
+
+
+class ChatReplyOut(BaseModel):
+    reply: str
+    # True when the clinical-question filter fired. The UI styles these differently
+    # so a patient sees a redirect, not an answer.
+    refused: bool
+
+
 class DevSignInRequest(BaseModel):
     """Dev sign-in: the username *is* the patient_id."""
 

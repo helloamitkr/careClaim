@@ -161,6 +161,8 @@ export default function PatientPortal() {
                 value={c.discharge_disposition ? titleCase(c.discharge_disposition) : null}
               />
             </dl>
+
+            <CaseChat caseId={c.case_id} />
           </article>
         ))}
       </div>
@@ -169,6 +171,121 @@ export default function PatientPortal() {
         Questions about your plan? Contact your care team.
       </p>
     </Shell>
+  );
+}
+
+interface Turn {
+  role: "you" | "assistant";
+  text: string;
+  /** The backend refused a clinical question. Styled as a redirect, not an answer. */
+  refused?: boolean;
+}
+
+/** Ask why a plan is held up.
+ *
+ *  Stateless by design — no history is sent, because the backend refuses each
+ *  message on its own and a transcript is only somewhere for a jailbreak to
+ *  accumulate. The list below is display state, nothing more.
+ */
+function CaseChat({ caseId }: { caseId: string }) {
+  const [open, setOpen] = useState(false);
+  const [turns, setTurns] = useState<Turn[]>([]);
+  const [draft, setDraft] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function send(e: React.FormEvent) {
+    e.preventDefault();
+    const message = draft.trim();
+    if (!message || busy) return;
+
+    setTurns((t) => [...t, { role: "you", text: message }]);
+    setDraft("");
+    setBusy(true);
+    try {
+      const res = await portalFetch(`/me/cases/${caseId}/chat`, {
+        method: "POST",
+        body: JSON.stringify({ message }),
+      });
+      if (!res.ok) {
+        const detail = res.status === 422 ? (await res.json()).detail : null;
+        setTurns((t) => [
+          ...t,
+          { role: "assistant", text: detail ?? "Sorry — I couldn't answer that just now." },
+        ]);
+        return;
+      }
+      const body = await res.json();
+      setTurns((t) => [...t, { role: "assistant", text: body.reply, refused: body.refused }]);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  if (!open) {
+    return (
+      <button
+        onClick={() => setOpen(true)}
+        className="mt-4 text-sm font-medium text-sky-700 dark:text-sky-300 hover:underline"
+      >
+        Ask about this plan
+      </button>
+    );
+  }
+
+  return (
+    <div className="mt-4 rounded-xl border border-black/10 dark:border-white/10 p-4">
+      <div className="flex items-center justify-between">
+        <h2 className="text-xs uppercase tracking-wide text-black/40 dark:text-white/40">
+          Ask about this plan
+        </h2>
+        <button
+          onClick={() => setOpen(false)}
+          className="text-xs text-black/40 dark:text-white/40 hover:underline"
+        >
+          Close
+        </button>
+      </div>
+
+      <p className="mt-1.5 text-xs text-black/45 dark:text-white/45">
+        I can explain your plan&rsquo;s status and what happens next. For anything about your
+        health or medication, please contact your care team.
+      </p>
+
+      {turns.length > 0 && (
+        <div className="mt-3 space-y-2.5">
+          {turns.map((t, i) => (
+            <div
+              key={i}
+              className={
+                t.role === "you"
+                  ? "ml-auto max-w-[85%] rounded-lg bg-sky-600 px-3 py-2 text-sm text-white"
+                  : t.refused
+                    ? "max-w-[90%] rounded-lg bg-amber-500/10 px-3 py-2 text-sm ring-1 ring-amber-500/20"
+                    : "max-w-[90%] rounded-lg bg-black/[0.04] dark:bg-white/[0.06] px-3 py-2 text-sm"
+              }
+            >
+              {t.text}
+            </div>
+          ))}
+        </div>
+      )}
+
+      <form onSubmit={send} className="mt-3 flex gap-2">
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          maxLength={500}
+          placeholder="Why is my plan taking so long?"
+          className="flex-1 rounded-lg border border-black/15 dark:border-white/15 bg-transparent px-3 py-2 text-sm"
+        />
+        <button
+          disabled={busy || !draft.trim()}
+          className="rounded-lg bg-sky-600 px-4 py-2 text-sm font-medium text-white hover:bg-sky-700 disabled:opacity-50"
+        >
+          {busy ? "…" : "Ask"}
+        </button>
+      </form>
+    </div>
   );
 }
 

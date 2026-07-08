@@ -52,6 +52,16 @@ def encrypt_email(email: str) -> bytes:
 
 
 def decrypt_email(blob: bytes) -> str:
+    """The read path for `email_encrypted`. Currently has no caller.
+
+    That is deliberate, not an oversight: reversible encryption is the *reason*
+    the column exists — a care team that has to reach a patient needs the
+    address back, and an HMAC cannot give it to them. `email_hmac` handles every
+    lookup we perform today, so nothing decrypts yet.
+
+    If you conclude the plaintext is never needed, delete this, `encrypt_email`,
+    and the column — a reversibly-encrypted secret nobody reads is pure risk.
+    """
     return _fernet().decrypt(bytes(blob)).decode()
 
 
@@ -72,8 +82,3 @@ def token_hash(token: str) -> bytes:
 
 def constant_time_equals(a: str, b: str) -> bool:
     return secrets.compare_digest(a, b)
-
-
-def keys_configured() -> bool:
-    """Lets the app start without portal keys when the portal is disabled."""
-    return bool(os.environ.get("PORTAL_ENC_KEY") and os.environ.get("PORTAL_HMAC_KEY"))

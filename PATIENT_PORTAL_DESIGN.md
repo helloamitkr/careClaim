@@ -248,20 +248,34 @@ their care plan, not the machinery that produced it.
 | `primary_diagnosis`, `discharge_date`, `disposition` | Yes | It's their record |
 | Follow-up appointment, medication instructions, referral | Yes | The point of the portal |
 | `status` | Mapped | See below |
-| `agent_decisions.confidence` | **No** | Meaningless and alarming to a patient |
-| `agent_decisions.rationale` | **No** | Internal model reasoning |
+| `agent_decisions.confidence` | **Never verbatim** | Meaningless and alarming to a patient |
+| `agent_decisions.rationale` | **Never verbatim** | Internal model reasoning — but see §13 |
 | `audit_log`, `events`, trace waterfall | **No** | Operational internals |
 | `payer`, `source_message_id`, `admitting_facility` | **No** | Not needed for their task |
 | Any other patient's anything | **No** | — |
+
+The two "never verbatim" rows changed meaning when the chat assistant shipped.
+Minimum-necessary **does not apply to disclosures to the individual themselves**
+(§164.502(b)(2)(i)) — a patient has a right of access to their own record. So the
+constraint on `rationale` was never "the patient may not know this"; it was "this
+text is written for clinicians and is useless to them". §13 translates it. No
+route serializes either field.
 
 Internal status leaks operational detail; map it:
 
 | Internal | Patient sees |
 |---|---|
 | `received`, `in_progress` | "We're preparing your plan" |
-| `needs_review` | "A care coordinator is reviewing your plan" |
-| `auto_completed`, `completed` | "Your plan is ready" |
+| `needs_review`, `auto_completed`, `completed` | "A care coordinator is reviewing your plan" |
+| any status, once `case_workflow.approved_at IS NOT NULL` | "Your plan is ready" |
 | `rejected` | "Please contact your care team" |
+
+**Approval, not the agent pipeline, is what makes a plan "ready."** The agents mark
+a case `completed` the moment they agree, which is long before a clinician has
+signed anything, and `approved_summary` is NULL until they do. Driving the label
+off `completed` told patients their plan was ready above an empty summary panel.
+`rejected` wins over approval: it means "contact your care team" whether or not
+something was previously signed.
 
 Implement as an **allowlist projection** — a `PortalCaseOut` Pydantic model
 built field-by-field. **Never** `return case_row.snapshot`, which is how the
@@ -393,3 +407,106 @@ the repository chokepoint **and** forced RLS → `PortalCaseOut` projection →
 That is roughly 400–600 lines. Everything else — MFA, OIDC, SSE, alerting — layers
 on top without redesign. Skipping the RLS role work (Phase 0 item 3) to "save
 time" is the one shortcut that invalidates the rest.
+
+---
+
+## 13. The status assistant (patient-facing chat)
+
+A patient whose plan is held up sees "Please contact your care team." and nothing
+else. The *reason* — an unconfirmed prior authorization, an out-of-network payer —
+lives in `agent_decisions.rationale`, which §7 forbids serializing.
+
+That forbiddance is about **form, not entitlement**. It is the patient's own
+record, and minimum-necessary does not bind disclosures to the individual. What
+binds us is that `"composite confidence set by weakest signal(s) —
+discharge_readiness (0.30)"` is meaningless and frightening. So the assistant
+translates it. The rationale is never returned; only a paraphrase of it is.
+
+### The threat model
+
+An LLM sitting between a discharged cardiac patient and their clinical record has
+four distinct failure modes, and each gets its own control. **None of the four
+trusts the model.**
+
+| # | Failure | Control | Where |
+|---|---|---|---|
+| 1 | Reads another patient's case | No `patient_id` in the route; session supplies it | `routes.py` |
+| 2 | Gives medical advice | Deterministic refusal **before** the model runs | `chat/intent.py` |
+| 3 | Prompt injection reaches other data | Context is RLS-bounded before the model sees it | migration 006 |
+| 4 | Echoes internal vocabulary | Reply discarded — never repaired — if it does | `chat/redact.py` |
+
+### Why the refusal is not a system prompt
+
+`"You are not a doctor, decline clinical questions"` is a **request**, not a
+control. `intent.is_clinical_question()` is a regex filter in Python, the refusal
+text is a module constant, and no model authors it. It runs before the database
+read, so a clinical question causes no PHI access at all — only a
+`chat_refused_clinical` denial row.
+
+Deliberately over-broad. A false positive costs one redirect to the care team,
+which is where a clinical question belonged anyway. A false negative costs
+something we cannot take back.
+
+### The reason view (migration 006)
+
+```
+portal role --SELECT--> portal.portal_case_reason_view   (owner: carebridge_owner)
+                                   |
+                                   | executes as owner ⇒ owner's RLS applies
+                                   v
+                  public.agent_decisions JOIN public.cases  (RLS on cases)
+```
+
+`agent_decisions` has **no RLS of its own and needs none**: the join to `cases` is
+what bounds it. With `app.patient_id` unset, `current_setting(..., true)` is NULL,
+`patient_id = NULL` matches nothing, and the view returns zero rows. Fails closed,
+exactly like `portal_case_view`. The portal role still has no privilege on either
+base table.
+
+Verify at the DB level, not through the app:
+
+```sql
+-- as carebridge_portal
+SELECT count(*) FROM public.agent_decisions;             -- permission denied
+SELECT count(*) FROM portal.portal_case_reason_view;     -- 0  (fails closed)
+BEGIN; SELECT set_config('app.patient_id','pt-0001',true);
+SELECT count(DISTINCT patient_id) FROM portal.portal_case_reason_view;  -- 1
+COMMIT;
+```
+
+### Prompt injection
+
+`rationale` is LLM-generated text derived from doctor-uploaded JSON — untrusted,
+twice over. It is fenced in a delimited block the system prompt declares to be
+data. **That is a mitigation, not a guarantee**, which is exactly why control 4
+exists: the reply is checked afterwards regardless of how well the fencing held.
+
+`redact.sanitize()` discards rather than repairs. A partially-scrubbed sentence
+about a patient's own care is worse than a clean fallback. It also refuses to log
+the matched text — logging a leak is another copy of the leak.
+
+### Statelessness
+
+No history, no conversation id. Nothing for a multi-turn jailbreak to accumulate
+in, and every message meets the clinical filter on its own. The transcript in the
+UI is display state.
+
+### Audit
+
+Every message is a PHI read: `action='chat'`, `outcome='allow'|'deny'`. Refusals
+write `action='chat_refused_clinical'`. Both IDOR shapes — another patient's case
+and a nonexistent one — return a byte-identical 404 and log a `deny`.
+
+### Before real patients
+
+**Every chat prompt contains the patient's diagnosis and case notes.** With
+`LLM_PROVIDER=anthropic` (or `gemini`) that leaves the machine. A signed BAA with
+the vendor is a prerequisite, not a formality. `LLM_PROVIDER=local` runs the same
+code path against Ollama with no egress.
+
+Add to §10's checklist:
+
+- [ ] BAA signed with the LLM vendor, **or** `LLM_PROVIDER=local` enforced for the portal
+- [ ] `intent.py` patterns reviewed by a clinician, not an engineer
+- [ ] Alert on `action='chat_refused_clinical'` spikes — a patient repeatedly asking
+      a machine for medical advice is a care-team signal, not just a filter hit

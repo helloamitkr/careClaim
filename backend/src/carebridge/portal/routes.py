@@ -14,13 +14,17 @@ from __future__ import annotations
 import os
 from functools import lru_cache
 
-from fastapi import APIRouter, Cookie, Depends, Header, HTTPException, Request, Response
+from fastapi import APIRouter, Cookie, Depends, HTTPException, Request, Response
 from loguru import logger
 
 from carebridge.portal import auth, repository
 from carebridge.portal.audit import AuditWriteError, PhiAccessAudit
-from carebridge.staff_auth import dev_mode, require_staff
+from carebridge.portal.chat import context as chat_context
+from carebridge.portal.chat import intent
+from carebridge.portal.chat.answer import answer_status_question
 from carebridge.portal.schemas import (
+    ChatMessageIn,
+    ChatReplyOut,
     DevSignInRequest,
     EnrollRequest,
     IssueEnrollmentRequest,
@@ -28,6 +32,7 @@ from carebridge.portal.schemas import (
     LoginTokenRequest,
     PortalCaseOut,
 )
+from carebridge.staff_auth import dev_mode, require_staff
 
 router = APIRouter(prefix="/api/portal", tags=["portal"])
 
@@ -71,19 +76,6 @@ async def current_session(
     if session is None:
         raise HTTPException(status_code=401, detail="Session expired")
     request.state.portal_session = session
-    return session
-
-
-async def require_csrf(
-    session: auth.Session = Depends(current_session),
-    csrf_token: str | None = Header(default=None, alias=auth.CSRF_HEADER),
-) -> auth.Session:
-    """Cookie auth reintroduces CSRF. SameSite=Strict is the first line; this
-    double-submit check is the second, for browsers that mishandle it."""
-    from carebridge.portal.crypto import constant_time_equals
-
-    if not csrf_token or not constant_time_equals(csrf_token, session.csrf_token):
-        raise HTTPException(status_code=403, detail="Invalid CSRF token")
     return session
 
 
@@ -185,7 +177,7 @@ async def request_login_link(body: LoginRequest, request: Request) -> dict[str, 
 @router.post("/auth/session")
 async def create_session(body: LoginTokenRequest, response: Response, request: Request):
     try:
-        cookie_value, csrf = auth.redeem_login_token(_engine(), token=body.token)
+        cookie_value = auth.redeem_login_token(_engine(), token=body.token)
     except auth.AuthError:
         _audit().record(
             actor_type="patient",
@@ -205,7 +197,7 @@ async def create_session(body: LoginTokenRequest, response: Response, request: R
         cookie_value,
         httponly=True,       # a JWT in localStorage is XSS-exfiltratable
         secure=_COOKIE_SECURE,
-        samesite="strict",   # first line of CSRF defence
+        samesite="strict",   # the whole of our CSRF defence — see auth.py
         max_age=int(auth.SESSION_ABSOLUTE_TIMEOUT.total_seconds()),
         path="/api/portal",
     )
@@ -218,9 +210,7 @@ async def create_session(body: LoginTokenRequest, response: Response, request: R
         source_ip=_client_ip(request),
         user_agent=request.headers.get("user-agent"),
     )
-    # The CSRF token goes in the body, not a cookie — that is what makes the
-    # double-submit check meaningful.
-    return {"status": "signed_in", "csrf_token": csrf}
+    return {"status": "signed_in"}
 
 
 @router.post("/auth/dev-session")
@@ -240,7 +230,7 @@ async def dev_session(body: DevSignInRequest, response: Response, request: Reque
     if not patient_id:
         raise HTTPException(status_code=422, detail="A username is required")
 
-    cookie_value, csrf = auth.create_session_for(_engine(), patient_id=patient_id)
+    cookie_value = auth.create_session_for(_engine(), patient_id=patient_id)
     response.set_cookie(
         auth.SESSION_COOKIE,
         cookie_value,
@@ -259,7 +249,7 @@ async def dev_session(body: DevSignInRequest, response: Response, request: Reque
         source_ip=_client_ip(request),
         user_agent=request.headers.get("user-agent"),
     )
-    return {"status": "signed_in", "csrf_token": csrf, "patient_id": patient_id}
+    return {"status": "signed_in", "patient_id": patient_id}
 
 
 @router.post("/auth/logout")
@@ -325,3 +315,65 @@ async def my_case(
         # endpoint into an enumeration oracle for other patients' case ids.
         raise HTTPException(status_code=404, detail="Case not found")
     return PortalCaseOut.from_row(row)
+
+
+@router.post("/me/cases/{case_id}/chat", response_model=ChatReplyOut)
+async def chat(
+    case_id: str,
+    body: ChatMessageIn,
+    request: Request,
+    session: auth.Session = Depends(current_session),
+) -> ChatReplyOut:
+    """Ask the assistant why this case is held up.
+
+    The four controls, in the order this function applies them, are described in
+    carebridge/portal/chat/__init__.py. Note especially that the clinical-question
+    refusal happens before any context is fetched: a patient asking "should I stop
+    my beta blocker?" never causes a PHI read at all.
+    """
+    try:
+        question = intent.validate(body.message)
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc))
+
+    ip, ua = _client_ip(request), request.headers.get("user-agent")
+
+    # (2) Refused in Python, before the model and before the database.
+    if intent.is_clinical_question(question):
+        try:
+            _audit().record(
+                actor_type="patient",
+                actor_id=session.patient_id,
+                action="chat_refused_clinical",
+                outcome="deny",
+                patient_id=session.patient_id,
+                case_id=case_id,
+                source_ip=ip,
+                user_agent=ua,
+            )
+        except AuditWriteError:
+            raise HTTPException(status_code=503, detail="Temporarily unavailable")
+        return ChatReplyOut(reply=intent.CARE_TEAM_REFUSAL, refused=True)
+
+    # (3) RLS-bounded. None for "no such case" and for "not yours", alike.
+    context = chat_context.fetch_case_context(session.patient_id, case_id)
+
+    try:
+        _audit().record(
+            actor_type="patient",
+            actor_id=session.patient_id,
+            action="chat",
+            outcome="allow" if context else "deny",
+            patient_id=session.patient_id,
+            case_id=case_id,
+            source_ip=ip,
+            user_agent=ua,
+        )
+    except AuditWriteError:
+        raise HTTPException(status_code=503, detail="Temporarily unavailable")
+
+    if context is None:
+        raise HTTPException(status_code=404, detail="Case not found")
+
+    # (4) sanitize() runs inside answer_status_question().
+    return ChatReplyOut(reply=answer_status_question(context, question), refused=False)

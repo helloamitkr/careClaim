@@ -66,6 +66,7 @@ STEPS: list[tuple[str, str, str | None]] = [
     ("002", "roles + portal schema", "002_roles_and_portal_schema.sql"),
     ("003", "row-level security + portal view", "003_rls_and_portal_view.sql"),
     ("005", "backfill case_workflow for pre-existing cases", "005_backfill_case_workflow.sql"),
+    ("006", "portal reason view (patient chat assistant)", "006_portal_reason_view.sql"),
 ]
 KNOWLEDGE_BASE = ("004", "knowledge base reference content", "004_knowledge_base.sql")
 

@@ -86,8 +86,13 @@ def _row(r) -> PortalCaseRow:
     )
 
 
-def _scoped(conn, session_patient_id: str) -> None:
+def scoped_to_patient(conn, session_patient_id: str) -> None:
     """Bind this transaction to one patient, for RLS.
+
+    Public because the chat assistant's read path (portal/chat/context.py) needs
+    the same binding against a different view. Every portal connection that
+    touches clinical data calls this first; forgetting to means the view returns
+    zero rows, not everybody's.
 
     set_config(..., is_local=true) rather than `SET LOCAL` because the latter
     cannot take a bound parameter — and string-interpolating a patient_id into
@@ -101,7 +106,7 @@ def _scoped(conn, session_patient_id: str) -> None:
 
 def fetch_my_cases(session_patient_id: str) -> list[PortalCaseRow]:
     with portal_engine().begin() as conn:  # begin(): SET LOCAL needs a transaction
-        _scoped(conn, session_patient_id)
+        scoped_to_patient(conn, session_patient_id)
         rows = conn.execute(
             text(
                 f"SELECT {_CASE_COLUMNS} FROM portal.portal_case_view "
@@ -117,7 +122,7 @@ def fetch_my_case(session_patient_id: str, case_id: str) -> PortalCaseRow | None
     somebody else. The caller must answer 404 for both — a 403 would confirm
     that the case_id is real, which is a slow enumeration oracle."""
     with portal_engine().begin() as conn:
-        _scoped(conn, session_patient_id)
+        scoped_to_patient(conn, session_patient_id)
         row = conn.execute(
             text(
                 f"SELECT {_CASE_COLUMNS} FROM portal.portal_case_view "

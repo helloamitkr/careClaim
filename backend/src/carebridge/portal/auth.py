@@ -16,6 +16,13 @@ Design decisions and the reasons for them (§5 of PATIENT_PORTAL_DESIGN.md):
 
 * The cookie value is never stored. Only its SHA-256 is, exactly as with a
   password hash: a database leak must not yield live sessions.
+
+* CSRF is handled by SameSite=Strict on the session cookie, and nothing else.
+  A double-submit token check used to exist here but was wired to no route, so
+  it protected nothing while reading as if it did. The `portal_session.csrf_token`
+  column survives (it is NOT NULL) and is filled with a random value nobody
+  reads. If you add a state-changing route that authenticates by cookie, that
+  column is where a real double-submit check would start.
 """
 
 from __future__ import annotations
@@ -37,10 +44,14 @@ ENROLLMENT_TTL = timedelta(hours=72)
 LOGIN_TOKEN_TTL = timedelta(minutes=10)
 SESSION_IDLE_TIMEOUT = timedelta(minutes=15)   # shared/family devices
 SESSION_ABSOLUTE_TIMEOUT = timedelta(hours=12)  # bounds a stolen cookie
-MAX_FAILED_LOGINS = 5
 
 SESSION_COOKIE = "carebridge_portal_session"
-CSRF_HEADER = "X-CSRF-Token"
+
+# Lockout: `portal_user.status` is the mechanism — set it to anything but
+# 'active' and request_login_token() refuses. There is deliberately no
+# failed-attempt counter: login is a passwordless magic link, so there is no
+# credential to brute-force. The `failed_logins` column is retained (it is NOT
+# NULL) but nothing reads or increments it.
 
 
 class EnrollmentError(RuntimeError):
@@ -55,7 +66,6 @@ class AuthError(RuntimeError):
 class Session:
     portal_user_id: uuid.UUID
     patient_id: str
-    csrf_token: str
 
 
 def _now() -> datetime:
@@ -177,11 +187,13 @@ def request_login_token(engine, *, email: str) -> str | None:
     return token
 
 
-def redeem_login_token(engine, *, token: str) -> tuple[str, str]:
+def redeem_login_token(engine, *, token: str) -> str:
     """Consume a login token and mint a session.
 
-    Returns (raw_session_cookie_value, csrf_token). Both are returned once; the
-    cookie's hash is what lives in the database.
+    Returns the raw session cookie value, once — only its hash lives in the
+    database. CSRF is handled by SameSite=Strict on the cookie; the
+    `csrf_token` column is filled with an unused random value because it is
+    NOT NULL. See the module docstring.
     """
     with engine.begin() as conn:
         row = conn.execute(
@@ -210,7 +222,6 @@ def redeem_login_token(engine, *, token: str) -> tuple[str, str]:
             raise AuthError("account is not active")
 
         cookie_value = new_token()
-        csrf = new_token()
         conn.execute(
             text(
                 "INSERT INTO portal.portal_session "
@@ -222,19 +233,16 @@ def redeem_login_token(engine, *, token: str) -> tuple[str, str]:
                 "h": token_hash(cookie_value),
                 "uid": user.portal_user_id,
                 "pid": row.patient_id,
-                "csrf": csrf,
+                "csrf": new_token(),  # NOT NULL; unused — see module docstring
                 "now": _now(),
                 "exp": _now() + SESSION_ABSOLUTE_TIMEOUT,
             },
         )
         conn.execute(
-            text(
-                "UPDATE portal.portal_user SET last_login_at = :now, failed_logins = 0 "
-                "WHERE portal_user_id = :uid"
-            ),
+            text("UPDATE portal.portal_user SET last_login_at = :now WHERE portal_user_id = :uid"),
             {"now": _now(), "uid": user.portal_user_id},
         )
-    return cookie_value, csrf
+    return cookie_value
 
 
 # ---------------------------------------------------------------------------
@@ -252,7 +260,7 @@ def resolve_session(engine, *, cookie_value: str) -> Session | None:
     with engine.begin() as conn:
         row = conn.execute(
             text(
-                "SELECT portal_user_id, patient_id, csrf_token, last_seen_at, "
+                "SELECT portal_user_id, patient_id, last_seen_at, "
                 "       expires_at, revoked_at "
                 "FROM portal.portal_session WHERE session_hash = :h FOR UPDATE"
             ),
@@ -273,14 +281,10 @@ def resolve_session(engine, *, cookie_value: str) -> Session | None:
             text("UPDATE portal.portal_session SET last_seen_at = :now WHERE session_hash = :h"),
             {"now": now, "h": token_hash(cookie_value)},
         )
-    return Session(
-        portal_user_id=row.portal_user_id,
-        patient_id=row.patient_id,
-        csrf_token=row.csrf_token,
-    )
+    return Session(portal_user_id=row.portal_user_id, patient_id=row.patient_id)
 
 
-def create_session_for(engine, *, patient_id: str) -> tuple[str, str]:
+def create_session_for(engine, *, patient_id: str) -> str:
     """DEV ONLY — mint a session from a bare patient_id, skipping enrollment and
     the magic link. Auto-creates the portal_user if it doesn't exist.
 
@@ -317,7 +321,7 @@ def create_session_for(engine, *, patient_id: str) -> tuple[str, str]:
         else:
             user_id = user.portal_user_id
 
-        cookie_value, csrf = new_token(), new_token()
+        cookie_value = new_token()
         conn.execute(
             text(
                 "INSERT INTO portal.portal_session "
@@ -329,12 +333,12 @@ def create_session_for(engine, *, patient_id: str) -> tuple[str, str]:
                 "h": token_hash(cookie_value),
                 "uid": user_id,
                 "pid": patient_id,
-                "csrf": csrf,
+                "csrf": new_token(),  # NOT NULL; unused — see module docstring
                 "now": _now(),
                 "exp": _now() + SESSION_ABSOLUTE_TIMEOUT,
             },
         )
-    return cookie_value, csrf
+    return cookie_value
 
 
 def revoke_session(engine, *, cookie_value: str) -> None:
