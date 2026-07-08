@@ -15,15 +15,22 @@ set API_PORT=8010
 set FRONTEND_PORT=3010
 set OLLAMA_PORT=11434
 
-REM ---- 1. Postgres via Docker Compose -----------------------
-echo [start] Starting Postgres...
-cd /d "%~dp0backend"
-docker compose up -d
-if errorlevel 1 (
-    echo [start] docker compose failed - is Docker Desktop running?
-    exit /b 1
+REM ---- 1. Postgres ------------------------------------------
+REM Reuse a locally installed Postgres if one is already listening
+REM (point DATABASE_URL at it in .env); otherwise start the Docker one.
+call :port_in_use 5432
+if not errorlevel 1 (
+    echo [start] Postgres already running on :5432 - skipping docker compose
+) else (
+    echo [start] Starting Postgres via Docker...
+    cd /d "%~dp0backend"
+    docker compose up -d
+    if errorlevel 1 (
+        echo [start] docker compose failed - is Docker Desktop running?
+        exit /b 1
+    )
+    cd /d "%~dp0"
 )
-cd /d "%~dp0"
 
 REM ---- 2. Ollama (local LLM server) --------------------------
 call :port_in_use %OLLAMA_PORT%

@@ -142,6 +142,91 @@ class CaseDetailOut(BaseModel):
     pending_review: dict[str, Any] | None
 
 
+class ActorIn(BaseModel):
+    """No authentication — the UI supplies who is acting. Recorded so an
+    approval is at least attributable, even though it is not proven."""
+
+    username: str
+    role: Literal["doctor", "admin"]
+
+
+class ApproveRequest(ActorIn):
+    summary_text: str
+
+
+class RequestReviewRequest(ActorIn):
+    reviewer: str | None = None  # defaults to the uploading doctor
+    note: str | None = None
+
+
+class SubmitReviewRequest(ActorIn):
+    summary_text: str
+
+
+class WorkflowCaseOut(BaseModel):
+    """One row in a doctor's or admin's work queue."""
+
+    case_id: str
+    patient_id: str
+    primary_diagnosis: str
+    stage: str            # processing | awaiting_admin | awaiting_doctor | approved
+    case_status: str      # the agent pipeline's own status
+    uploaded_by: str
+    assigned_reviewer: str | None = None
+    review_note: str | None = None
+    approved_by: str | None = None
+    approved_at: datetime | None = None
+    # The signed narrative, echoed back so the uploading doctor sees exactly what
+    # was released to their patient. NULL until approval: a doctor's own
+    # resubmitted draft lives in the same column, and surfacing that here would
+    # show unapproved text in a row badged "Approved & released".
+    summary_text: str | None = None
+    agents_ready: bool
+    updated_at: datetime
+
+
+class WorkflowActionOut(BaseModel):
+    case_id: str
+    stage: str
+    assigned_reviewer: str | None = None
+
+
+class PatientSearchResultOut(BaseModel):
+    """One patient in the clinician's search results, with their latest case."""
+
+    patient_id: str
+    case_count: int
+    latest_case_id: str
+    latest_status: str
+    primary_diagnosis: str
+    discharge_date: str | None = None
+    updated_at: datetime
+
+
+class DraftSectionOut(BaseModel):
+    """One agent's contribution to the discharge summary draft."""
+
+    agent_name: str
+    heading: str
+    body: str
+    confidence: float
+
+
+class DraftSummaryOut(BaseModel):
+    """The draft a clinician reviews and edits before approving.
+
+    `draft` is the editable narrative; `sections` is the same content broken out
+    per agent so the UI can show which agent produced what, and how sure it was.
+    """
+
+    case_id: str
+    patient_id: str
+    status: str
+    ready: bool  # false while the agents are still working
+    draft: str
+    sections: list[DraftSectionOut]
+
+
 class ReviewRequest(BaseModel):
     action: Literal["approved", "overridden", "rejected"]
     reviewer: str

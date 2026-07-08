@@ -10,7 +10,7 @@ from datetime import timedelta
 from carebridge.agents.base import Agent, AgentDecision
 from carebridge.bus import EventBus
 from carebridge.models import DischargeDisposition, TransitionCase
-from carebridge.rag import KnowledgeBase, default_knowledge_base
+from carebridge.services.rag import KnowledgeBase, default_knowledge_base
 
 DEFAULT_LEAD_DAYS = 14
 

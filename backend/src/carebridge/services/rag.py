@@ -6,7 +6,7 @@ clinical guidance.
 Two implementations of one interface:
 
 - PostgresKnowledgeBase — production. Reads the `knowledge_base` table
-  seeded by knowledegebase.sql (project root), following that file's
+  seeded by dbmigration/004_knowledge_base.sql, following that file's
   retrieval contract: is_active only, ORDER BY priority ASC, version DESC.
 - InMemoryKnowledgeBase — tests and DB-less runs (demos, unit tests). Ships
   with SEED_ENTRIES, a Python mirror of the SQL seed data. If you add rows
@@ -105,7 +105,7 @@ class InMemoryKnowledgeBase(KnowledgeBase):
 
 
 class PostgresKnowledgeBase(KnowledgeBase):
-    """Reads the knowledge_base table loaded from knowledegebase.sql. The
+    """Reads the knowledge_base table loaded from dbmigration/004_knowledge_base.sql. The
     table lives outside the ORM metadata (it's owned by that SQL file), so
     queries are textual — the retrieval contract is enforced in each one."""
 
@@ -190,7 +190,7 @@ def _e(category: str, key: str, content: str, *, title: str | None = None,
     )
 
 
-# Python mirror of knowledegebase.sql — keep the two in sync. (The SQL file's
+# Python mirror of dbmigration/004_knowledge_base.sql — keep the two in sync. (The SQL file's
 # 'risk' category is not mirrored: no agent retrieves it yet — risk routing is
 # composite-confidence-driven, see risk_escalation.py.)
 SEED_ENTRIES: list[KnowledgeEntry] = [

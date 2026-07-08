@@ -14,8 +14,8 @@ from carebridge.audit import AuditLogRecord, AuditTrail
 from carebridge.bus import Event, EventBus
 from carebridge.fixtures import CASE_A_CLEAN, CASE_B_PAYER_DELAY, CASE_C_HIGH_RISK
 from carebridge.persistence import AgentDecisionRecord, CaseRecord, Database, EventRecord
-from carebridge.review_gate import HumanReviewGate, fake_human_reviewer
-from carebridge.router import ConfidenceRouter
+from carebridge.services.review_gate import HumanReviewGate, fake_human_reviewer
+from carebridge.services.router import ConfidenceRouter
 
 
 async def main() -> None:

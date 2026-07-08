@@ -2,7 +2,7 @@ import pytest
 
 from carebridge.bus import Event, EventBus
 from carebridge.fixtures import CASE_C_HIGH_RISK
-from carebridge.review_gate import HumanReviewGate, ReviewStatus, fake_human_reviewer
+from carebridge.services.review_gate import HumanReviewGate, ReviewStatus, fake_human_reviewer
 
 
 async def test_case_is_blocked_and_nothing_downstream_fires():

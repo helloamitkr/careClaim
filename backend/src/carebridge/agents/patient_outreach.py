@@ -11,7 +11,7 @@ from carebridge.agents.base import Agent, AgentDecision
 from carebridge.bus import EventBus
 from carebridge.llm import LLMClient, create_llm_client
 from carebridge.models import TransitionCase
-from carebridge.rag import KnowledgeBase, default_knowledge_base
+from carebridge.services.rag import KnowledgeBase, default_knowledge_base
 
 CHANNEL_SEQUENCE = ["phone", "sms", "portal"]
 MAX_ATTEMPTS = len(CHANNEL_SEQUENCE)

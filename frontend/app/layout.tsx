@@ -2,6 +2,7 @@ import type { Metadata } from "next";
 import { Geist, Geist_Mono } from "next/font/google";
 import Link from "next/link";
 import { Nav } from "@/app/components/Nav";
+import { StaffChrome } from "@/app/components/StaffChrome";
 import "./globals.css";
 
 const geistSans = Geist({
@@ -30,6 +31,7 @@ export default function RootLayout({
       className={`${geistSans.variable} ${geistMono.variable} h-full antialiased`}
     >
       <body className="min-h-full flex flex-col">
+        <StaffChrome>
         <header className="sticky top-0 z-40 border-b border-black/10 dark:border-white/10 bg-[var(--background)]/80 backdrop-blur">
           <div className="mx-auto max-w-5xl px-6 py-3 flex items-center gap-3">
             <Link href="/" className="flex items-center gap-2.5">
@@ -54,12 +56,15 @@ export default function RootLayout({
             <Nav />
           </div>
         </header>
+        </StaffChrome>
         <main className="flex-1">{children}</main>
+        <StaffChrome>
         <footer className="border-t border-black/5 dark:border-white/5">
           <div className="mx-auto max-w-5xl px-6 py-4 text-[11px] text-black/35 dark:text-white/35">
             5 agents · confidence-routed · human-in-the-loop · every decision audited
           </div>
         </footer>
+        </StaffChrome>
       </body>
     </html>
   );

@@ -9,12 +9,13 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import time
 from contextlib import asynccontextmanager
 from datetime import datetime, timezone
 from uuid import uuid4
 
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Body, Depends, FastAPI, HTTPException, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from loguru import logger
@@ -30,44 +31,58 @@ from carebridge.audit import AuditLogRecord, AuditTrail
 from carebridge.bus import Event, EventBus
 from carebridge.fixtures import new_case_from_template
 from carebridge.guardrails import InputGuardrail
-from carebridge.logging_setup import (
+from carebridge.llm import llm_available
+from carebridge.logging import (
     configure_logging,
     newest_log_file,
     parse_log_line,
     tail_records,
 )
 from carebridge.middleware import RateLimitMiddleware
-from carebridge.models import TransitionCase
+from carebridge.models import CaseStatus, TransitionCase
 from carebridge.persistence import AgentDecisionRecord, CaseRecord, Database, EventRecord
-from carebridge.rag import KnowledgeBase, PostgresKnowledgeBase, default_knowledge_base
-from carebridge.review_gate import HumanReviewGate, ReviewStatus
-from carebridge.router import ConfidenceRouter
+from carebridge.portal.routes import router as portal_router
+from carebridge.services import workflow
+from carebridge.services.drafting import build_sections, compose_draft, is_ready
+from carebridge.services.rag import KnowledgeBase, PostgresKnowledgeBase, default_knowledge_base
+from carebridge.services.review_gate import HumanReviewGate, ReviewStatus
+from carebridge.services.router import ConfidenceRouter
+from carebridge.staff_auth import STAFF_COOKIE, require_staff, verify_staff_token
 
 
-def build_pipeline(db: Database) -> tuple[EventBus, HumanReviewGate, RiskEscalationAgent]:
+def build_pipeline(db: Database) -> tuple[EventBus, HumanReviewGate, RiskEscalationAgent, AuditTrail]:
     audit = AuditTrail(db)
     bus = EventBus(db=db, audit=audit)
 
-    # Step 14 — RAG store. Postgres-backed when knowledegebase.sql has been
+    # Step 14 — RAG store. Postgres-backed when migration 004 has been
     # loaded; otherwise the in-memory seed keeps the pipeline fully working.
     kb: KnowledgeBase = PostgresKnowledgeBase(db)
     if not kb.is_available():
         logger.bind(component="rag").warning(
             "knowledge_base table not found — using in-memory seed "
-            "(load knowledegebase.sql for the Postgres-backed store)"
+            "(run `python dbmigration/migrate.py --with-knowledge-base` for the "
+            "Postgres-backed store)"
         )
         kb = default_knowledge_base()
 
     ReferralRoutingAgent(bus, kb=kb)
     FollowUpSchedulingAgent(bus, kb=kb)
-    MedicationInstructionAgent(bus, kb=kb)
-    PatientOutreachAgent(bus, kb=kb)
-    DischargeReadinessAgent(bus, kb=kb)
+    if llm_available():
+        # Constructed only when the LLM is usable — each of these builds an
+        # LLM client on init, which would fail fast without a token.
+        MedicationInstructionAgent(bus, kb=kb)
+        PatientOutreachAgent(bus, kb=kb)
+        DischargeReadinessAgent(bus, kb=kb)
+    else:
+        logger.bind(component="pipeline").warning(
+            "LLM_AVAILABLE=false — LLM agents not started; incoming cases will "
+            "be stored at status 'received' and left unprocessed"
+        )
     risk_agent = RiskEscalationAgent(bus)
     ConfidenceRouter(bus, listens_to="case.risk_assessed", threshold=0.75)
     gate = HumanReviewGate(bus)
 
-    return bus, gate, risk_agent
+    return bus, gate, risk_agent, audit
 
 
 @asynccontextmanager
@@ -75,20 +90,24 @@ async def lifespan(app: FastAPI):
     configure_logging()  # Step 15 — console + rotating JSON file
     db = Database()
     db.init_schema()
-    bus, gate, risk_agent = build_pipeline(db)
+    bus, gate, risk_agent, audit = build_pipeline(db)
 
-    # Step 12 — replay any case a previous process left mid-pipeline.
-    recovered = await risk_agent.recover_from_db()
-    if recovered:
-        logger.bind(component="recovery").info(
-            "replayed {n} stranded case(s): {cases}",
-            n=len(recovered),
-            cases=", ".join(recovered),
-        )
+    # Step 12 — replay any case a previous process left mid-pipeline. Also the
+    # mechanism that drains cases parked at 'received' while LLM_AVAILABLE was
+    # false: flip the flag back on, restart, and they run one by one.
+    if llm_available():
+        recovered = await risk_agent.recover_from_db()
+        if recovered:
+            logger.bind(component="recovery").info(
+                "replayed {n} stranded case(s): {cases}",
+                n=len(recovered),
+                cases=", ".join(recovered),
+            )
 
     app.state.db = db
     app.state.bus = bus
     app.state.gate = gate
+    app.state.audit = audit
     app.state.bulk_tasks = set()  # keeps background batch tasks alive until done
     yield
 
@@ -97,11 +116,19 @@ app = FastAPI(title="CareBridge AI API", lifespan=lifespan)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3010"],
+    # allow_credentials is required for the staff/portal session cookies. It is
+    # also why allow_origins must stay an explicit list — the browser refuses
+    # "*" with credentials, and CORS was never a server-side control anyway.
+    allow_origins=os.environ.get(
+        "CORS_ALLOW_ORIGINS", "http://localhost:3010,http://localhost:3011"
+    ).split(","),
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 app.add_middleware(RateLimitMiddleware)  # Step 13 — RATE_LIMIT_PER_MINUTE to tune
+
+app.include_router(portal_router)  # patient portal — separate trust zone
 
 
 @app.middleware("http")
@@ -124,20 +151,47 @@ async def log_requests(request: Request, call_next):
 
 
 @app.get("/api/health")
-async def health() -> dict[str, str]:
+async def health() -> dict[str, str | bool]:
+    # llm_available tells the caller whether new cases will be processed or
+    # parked at 'received'. start.sh's readiness probe only checks "status".
+    return {"status": "ok", "llm_available": llm_available()}
+
+
+@app.post("/api/staff/session")
+async def staff_session(response: Response, token: str = Body(embed=True)) -> dict[str, str]:
+    """Exchange the staff token for an httpOnly cookie.
+
+    Exists because EventSource cannot set an Authorization header, so the log
+    viewer has no other way to authenticate. httpOnly means page scripts — and
+    anything that manages to inject one — cannot read the token back out.
+    """
+    if not verify_staff_token(token):
+        raise HTTPException(status_code=401, detail="Invalid staff token")
+    response.set_cookie(
+        STAFF_COOKIE,
+        token,
+        httponly=True,
+        secure=os.environ.get("PORTAL_COOKIE_SECURE", "true").lower() != "false",
+        samesite="strict",
+        max_age=8 * 3600,
+        path="/api",
+    )
     return {"status": "ok"}
 
 
-@app.get("/api/logs/tail")
+@app.get("/api/logs/tail", dependencies=[Depends(require_staff)])
 async def tail_logs(lines: int = 100) -> list[dict]:
-    """Step 16 — last N log records, for the viewer's initial backfill."""
+    """Step 16 — last N log records, for the viewer's initial backfill.
+
+    Staff-only: the event log names case ids and agent decisions, and was
+    previously readable by anyone who could reach this port."""
     path = newest_log_file()
     if path is None:
         return []
     return tail_records(path, min(max(lines, 1), 1000))
 
 
-@app.get("/api/logs/stream")
+@app.get("/api/logs/stream", dependencies=[Depends(require_staff)])
 async def stream_logs(request: Request) -> StreamingResponse:
     """Step 16 — follow the log file as Server-Sent Events: one `data:` line
     per log record, `tail -f` over HTTP. The /logs page connects an
@@ -199,7 +253,12 @@ async def list_fixtures() -> list[schemas.FixtureTemplateOut]:
 async def create_case(body: schemas.CreateCaseRequest) -> schemas.CaseCreatedOut:
     bus: EventBus = app.state.bus
     case = new_case_from_template(body.template)
-    await bus.publish(Event(event_type="case.created", case=case))
+    # dispatch=False parks the case at 'received' when the LLM is unavailable.
+    await bus.publish(Event(event_type="case.created", case=case), dispatch=llm_available())
+
+    with app.state.db.Session() as session:
+        workflow.claim(session, case.case_id)  # uploader unknown: created from a fixture
+        session.commit()
 
     with app.state.db.Session() as session:
         row = session.get(CaseRecord, case.case_id)
@@ -228,7 +287,9 @@ def _case_from_ingest(body: schemas.IngestCaseRequest) -> TransitionCase:
 MAX_BULK_CASES = 100
 
 
-async def _ingest_bulk(items: list[schemas.IngestCaseRequest]) -> schemas.BulkIngestOut:
+async def _ingest_bulk(
+    items: list[schemas.IngestCaseRequest], uploaded_by: str = ""
+) -> schemas.BulkIngestOut:
     """Array ingest: every item is validated and guardrail-checked up front —
     one bad row never sinks the batch. Accepted cases are queued and the
     pipeline runs them in the background (the LLM agents take seconds per
@@ -277,12 +338,22 @@ async def _ingest_bulk(items: list[schemas.IngestCaseRequest]) -> schemas.BulkIn
             )
 
     bus: EventBus = app.state.bus
+    dispatch = llm_available()
+
+    # Record every case in the workflow *before* the agents start. Without a row
+    # the case is invisible to both panels and cannot be approved, so this runs
+    # even when no uploader was supplied.
+    with app.state.db.Session() as session:
+        for case in accepted:
+            workflow.claim(session, case.case_id, uploaded_by)
+        session.commit()
 
     async def run_batch() -> None:
         # Sequential on purpose: the local LLM serializes requests anyway,
-        # and one case at a time keeps the live log stream readable.
+        # and one case at a time keeps the live log stream readable. With
+        # dispatch=False every case is simply stored at 'received'.
         for case in accepted:
-            await bus.publish(Event(event_type="case.created", case=case))
+            await bus.publish(Event(event_type="case.created", case=case), dispatch=dispatch)
 
     task = asyncio.create_task(run_batch())
     app.state.bulk_tasks.add(task)
@@ -303,13 +374,14 @@ async def _ingest_bulk(items: list[schemas.IngestCaseRequest]) -> schemas.BulkIn
 @app.post("/api/cases/ingest", response_model=schemas.CaseCreatedOut | schemas.BulkIngestOut)
 async def ingest_case(
     body: schemas.IngestCaseRequest | list[schemas.IngestCaseRequest],
+    uploaded_by: str = "",
 ) -> schemas.CaseCreatedOut | schemas.BulkIngestOut:
     """Manual front door to the EHR normalization layer. A single JSON
     object runs the pipeline synchronously and returns the final status;
     a JSON array is bulk mode — validated up front, processed in the
     background, per-item results returned immediately."""
     if isinstance(body, list):
-        return await _ingest_bulk(body)
+        return await _ingest_bulk(body, uploaded_by)
 
     with app.state.db.Session() as session:
         if body.case_id and session.get(CaseRecord, body.case_id) is not None:
@@ -329,7 +401,11 @@ async def ingest_case(
     case = report.case
 
     bus: EventBus = app.state.bus
-    await bus.publish(Event(event_type="case.created", case=case))
+    await bus.publish(Event(event_type="case.created", case=case), dispatch=llm_available())
+
+    with app.state.db.Session() as session:
+        workflow.claim(session, case.case_id, uploaded_by)
+        session.commit()
 
     with app.state.db.Session() as session:
         row = session.get(CaseRecord, case.case_id)
@@ -352,6 +428,224 @@ async def list_cases() -> list[schemas.CaseListItemOut]:
             )
             for row in rows
         ]
+
+
+# ---------------------------------------------------------------------------
+# Clinician workflow: doctor uploads -> agents -> admin approves -> patient sees
+# ---------------------------------------------------------------------------
+
+
+def _agents_ready(session, case_id: str) -> bool:
+    decisions = session.query(AgentDecisionRecord).filter_by(case_id=case_id).all()
+    return is_ready(decisions)
+
+
+def _workflow_row_out(session, case_row: CaseRecord, wf) -> schemas.WorkflowCaseOut:
+    ready = _agents_ready(session, case_row.case_id)
+    return schemas.WorkflowCaseOut(
+        case_id=case_row.case_id,
+        patient_id=case_row.patient_id,
+        primary_diagnosis=str(case_row.snapshot.get("primary_diagnosis", "")),
+        stage=workflow.stage_of(wf, ready).value,
+        case_status=case_row.status,
+        uploaded_by=wf.uploaded_by if wf else "unknown",
+        assigned_reviewer=wf.assigned_reviewer if wf else None,
+        review_note=wf.review_note if wf else None,
+        approved_by=wf.approved_by if wf else None,
+        approved_at=wf.approved_at if wf else None,
+        # Gated on approval, not on the column being populated — see WorkflowCaseOut.
+        summary_text=wf.summary_text if wf and wf.approved_at else None,
+        agents_ready=ready,
+        updated_at=case_row.updated_at,
+    )
+
+
+@app.get("/api/workflow/queue", response_model=list[schemas.WorkflowCaseOut])
+async def workflow_queue(role: str, username: str = "") -> list[schemas.WorkflowCaseOut]:
+    """What this person must act on.
+
+    admin  — everything not yet approved (they are the approval gate)
+    doctor — cases they uploaded, plus anything routed back to them for review
+    """
+    if role not in ("admin", "doctor"):
+        raise HTTPException(status_code=422, detail="role must be 'admin' or 'doctor'")
+
+    with app.state.db.Session() as session:
+        rows = session.query(CaseRecord).order_by(CaseRecord.updated_at.desc()).all()
+        out: list[schemas.WorkflowCaseOut] = []
+        for case_row in rows:
+            wf = session.get(workflow.CaseWorkflow, case_row.case_id)
+            if role == "doctor":
+                # A doctor sees only what they uploaded or what was routed to them.
+                if wf is None or username not in (wf.uploaded_by, wf.assigned_reviewer):
+                    continue
+            # An admin sees everything, including legacy cases with no workflow
+            # row — they are exactly the ones that need attention.
+            out.append(_workflow_row_out(session, case_row, wf))
+    return out
+
+
+@app.post("/api/workflow/{case_id}/approve", response_model=schemas.WorkflowActionOut)
+async def approve_case(case_id: str, body: schemas.ApproveRequest) -> schemas.WorkflowActionOut:
+    """Admin signs off. This — not the agents finishing — is what makes the
+    summary visible to the patient."""
+    actor = workflow.Actor(username=body.username, role=body.role)
+    with app.state.db.Session() as session:
+        try:
+            wf = workflow.approve(session, case_id, actor, body.summary_text)
+        except workflow.NotPermitted as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except workflow.WrongStage as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+
+        case_row = session.get(CaseRecord, case_id)
+        if case_row is None:
+            raise HTTPException(status_code=404, detail="Case not found")
+        case_row.status = CaseStatus.COMPLETED.value
+        case_row.updated_at = datetime.now(timezone.utc)
+        session.commit()
+        stage = workflow.Stage.APPROVED.value
+
+    app.state.audit.record(
+        case_id=case_id,
+        agent_id="workflow",
+        input_summary=f"approved by {actor.username}",
+        confidence=None,
+        decision="approved",
+        rationale="Discharge summary approved and released to the patient.",
+        reviewer=actor.username,
+    )
+    return schemas.WorkflowActionOut(case_id=case_id, stage=stage, assigned_reviewer=None)
+
+
+@app.post("/api/workflow/{case_id}/request-review", response_model=schemas.WorkflowActionOut)
+async def request_doctor_review(
+    case_id: str, body: schemas.RequestReviewRequest
+) -> schemas.WorkflowActionOut:
+    """Admin bounces the case back to a doctor. Defaults to the uploader — the
+    "simple case, same doctor" path."""
+    actor = workflow.Actor(username=body.username, role=body.role)
+    with app.state.db.Session() as session:
+        try:
+            wf = workflow.request_review(session, case_id, actor, body.reviewer or "", body.note)
+        except workflow.NotPermitted as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except workflow.WrongStage as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        reviewer = wf.assigned_reviewer
+        session.commit()
+
+    app.state.audit.record(
+        case_id=case_id,
+        agent_id="workflow",
+        input_summary=f"review requested by {actor.username}",
+        confidence=None,
+        decision="review_requested",
+        rationale=body.note or f"Routed to {reviewer} for clinical review.",
+        reviewer=actor.username,
+    )
+    return schemas.WorkflowActionOut(
+        case_id=case_id, stage=workflow.Stage.AWAITING_DOCTOR.value, assigned_reviewer=reviewer
+    )
+
+
+@app.post("/api/workflow/{case_id}/submit-review", response_model=schemas.WorkflowActionOut)
+async def submit_doctor_review(
+    case_id: str, body: schemas.SubmitReviewRequest
+) -> schemas.WorkflowActionOut:
+    """The doctor edits the draft and returns it to the admin for approval."""
+    actor = workflow.Actor(username=body.username, role=body.role)
+    with app.state.db.Session() as session:
+        try:
+            workflow.submit_review(session, case_id, actor, body.summary_text)
+        except workflow.NotPermitted as exc:
+            raise HTTPException(status_code=403, detail=str(exc))
+        except workflow.WrongStage as exc:
+            raise HTTPException(status_code=409, detail=str(exc))
+        session.commit()
+
+    app.state.audit.record(
+        case_id=case_id,
+        agent_id="workflow",
+        input_summary=f"doctor review submitted by {actor.username}",
+        confidence=None,
+        decision="review_submitted",
+        rationale="Clinician edited the draft and returned it for approval.",
+        reviewer=actor.username,
+    )
+    return schemas.WorkflowActionOut(
+        case_id=case_id, stage=workflow.Stage.AWAITING_ADMIN.value, assigned_reviewer=None
+    )
+
+
+@app.get("/api/patients/search", response_model=list[schemas.PatientSearchResultOut])
+async def search_patients(q: str = "", limit: int = 20) -> list[schemas.PatientSearchResultOut]:
+    """Clinician patient lookup. Matches on patient_id or diagnosis, and returns
+    one row per patient — their most recently updated case."""
+    needle = q.strip().lower()
+    with app.state.db.Session() as session:
+        rows = (
+            session.query(CaseRecord).order_by(CaseRecord.updated_at.desc()).all()
+        )
+
+    latest: dict[str, CaseRecord] = {}
+    counts: dict[str, int] = {}
+    for row in rows:
+        diagnosis = str(row.snapshot.get("primary_diagnosis", ""))
+        if needle and needle not in row.patient_id.lower() and needle not in diagnosis.lower():
+            continue
+        counts[row.patient_id] = counts.get(row.patient_id, 0) + 1
+        latest.setdefault(row.patient_id, row)  # rows are newest-first
+
+    return [
+        schemas.PatientSearchResultOut(
+            patient_id=pid,
+            case_count=counts[pid],
+            latest_case_id=row.case_id,
+            latest_status=row.status,
+            primary_diagnosis=str(row.snapshot.get("primary_diagnosis", "")),
+            discharge_date=row.snapshot.get("discharge_date"),
+            updated_at=row.updated_at,
+        )
+        for pid, row in list(latest.items())[: max(1, min(limit, 100))]
+    ]
+
+
+@app.get("/api/cases/{case_id}/draft", response_model=schemas.DraftSummaryOut)
+async def case_draft(case_id: str) -> schemas.DraftSummaryOut:
+    """The draft discharge summary a clinician reviews before approving.
+
+    Deterministic — composed from what the agents already decided, not a fresh
+    LLM call, so re-reading a case never changes the text under the reviewer.
+    """
+    with app.state.db.Session() as session:
+        case_row = session.get(CaseRecord, case_id)
+        if case_row is None:
+            raise HTTPException(status_code=404, detail="Case not found")
+        decisions = (
+            session.query(AgentDecisionRecord)
+            .filter_by(case_id=case_id)
+            .order_by(AgentDecisionRecord.id)
+            .all()
+        )
+
+    sections = build_sections(decisions)
+    return schemas.DraftSummaryOut(
+        case_id=case_id,
+        patient_id=case_row.patient_id,
+        status=case_row.status,
+        ready=is_ready(decisions),
+        draft=compose_draft(case_row.snapshot, sections),
+        sections=[
+            schemas.DraftSectionOut(
+                agent_name=s.agent_name,
+                heading=s.heading,
+                body=s.body,
+                confidence=s.confidence,
+            )
+            for s in sections
+        ],
+    )
 
 
 @app.get("/api/cases/{case_id}", response_model=schemas.CaseDetailOut)

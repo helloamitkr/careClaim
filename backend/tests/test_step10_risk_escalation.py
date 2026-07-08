@@ -6,8 +6,8 @@ from carebridge.agents.referral_routing import ReferralRoutingAgent
 from carebridge.agents.risk_escalation import RiskEscalationAgent
 from carebridge.bus import Event, EventBus
 from carebridge.fixtures import CASE_A_CLEAN, CASE_B_PAYER_DELAY, CASE_C_HIGH_RISK
-from carebridge.review_gate import HumanReviewGate, fake_human_reviewer
-from carebridge.router import ConfidenceRouter
+from carebridge.services.review_gate import HumanReviewGate, fake_human_reviewer
+from carebridge.services.router import ConfidenceRouter
 from tests.fakes import FakeLLM
 
 

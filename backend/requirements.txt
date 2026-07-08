@@ -8,5 +8,7 @@ fastapi>=0.110
 uvicorn[standard]>=0.29
 httpx>=0.27
 loguru>=0.7
-anthropic>=0.40
+anthropic>=0.40     # LLM_PROVIDER=anthropic — imported lazily
+google-genai>=1.0   # LLM_PROVIDER=gemini    — imported lazily
 python-dotenv>=1.0
+cryptography>=42  # portal: encrypt patient email at rest (PHI identity linkage)

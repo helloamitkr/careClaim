@@ -3,33 +3,10 @@
 from __future__ import annotations
 
 from datetime import date, datetime, timezone
-from enum import Enum
 
 from pydantic import BaseModel, Field
 
-
-class DataSource(str, Enum):
-    EHR_HL7_V2 = "ehr_hl7_v2"
-    EHR_FHIR_R4 = "ehr_fhir_r4"
-    CCDA = "ccda"
-    SYNTHETIC = "synthetic"
-
-
-class DischargeDisposition(str, Enum):
-    HOME = "home"
-    HOME_HEALTH = "home_health"
-    SNF = "snf"
-    HOSPICE = "hospice"
-    OTHER = "other"
-
-
-class CaseStatus(str, Enum):
-    RECEIVED = "received"
-    IN_PROGRESS = "in_progress"
-    NEEDS_REVIEW = "needs_review"
-    AUTO_COMPLETED = "auto_completed"
-    COMPLETED = "completed"
-    REJECTED = "rejected"
+from carebridge.models.enums import CaseStatus, DataSource, DischargeDisposition
 
 
 class TransitionCase(BaseModel):

@@ -11,7 +11,7 @@ from carebridge.agents.referral_routing import ReferralRoutingAgent
 from carebridge.bus import Event, EventBus
 from carebridge.fixtures import CASE_A_CLEAN
 from carebridge.guardrails import InputGuardrail
-from carebridge.logging_setup import configure_logging
+from carebridge.logging import configure_logging
 
 
 @pytest.fixture()
