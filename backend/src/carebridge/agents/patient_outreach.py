@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from carebridge.agents.base import Agent, AgentDecision
 from carebridge.bus import EventBus
-from carebridge.llm import OllamaClient
+from carebridge.llm import LLMClient, create_llm_client
 from carebridge.models import TransitionCase
 from carebridge.rag import KnowledgeBase, default_knowledge_base
 
@@ -33,11 +33,11 @@ class PatientOutreachAgent(Agent):
     def __init__(
         self,
         bus: EventBus,
-        llm: OllamaClient | None = None,
+        llm: LLMClient | None = None,
         kb: KnowledgeBase | None = None,
     ) -> None:
         super().__init__(bus)
-        self.llm = llm or OllamaClient()
+        self.llm = llm or create_llm_client()
         self.kb = kb or default_knowledge_base()
 
     def _decide(self, case: TransitionCase) -> AgentDecision:

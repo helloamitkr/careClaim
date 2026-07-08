@@ -17,6 +17,7 @@ backend/logs/
 # Environment / secrets
 .env
 .env.*
+!.env.example
 
 # OS noise
 .DS_Store
