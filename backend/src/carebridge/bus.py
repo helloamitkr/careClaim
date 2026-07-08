@@ -47,7 +47,10 @@ class EventBus:
     def subscribe(self, event_type: str, handler: EventHandler) -> None:
         self._subscribers[event_type].append(handler)
 
-    async def publish(self, event: Event) -> None:
+    async def publish(self, event: Event, *, dispatch: bool = True) -> None:
+        """dispatch=False persists the event and its case but skips the
+        subscribers — used to park a case at 'received' when the LLM is
+        unavailable, so no agent half-processes it."""
         self.history.append(event)
         # Step 15 — the one log line that sees everything: every agent
         # decision, routing verdict, and review action is an event.
@@ -63,5 +66,7 @@ class EventBus:
         if self.db is not None:
             self.db.upsert_case(event.case)
             self.db.record_event(event)
+        if not dispatch:
+            return
         handlers = self._subscribers.get(event.event_type, [])
         await asyncio.gather(*(handler(event) for handler in handlers))

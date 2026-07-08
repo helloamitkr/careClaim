@@ -15,8 +15,8 @@ from carebridge.agents.risk_escalation import RiskEscalationAgent
 from carebridge.bus import Event, EventBus
 from carebridge.fixtures import CASE_A_CLEAN
 from carebridge.persistence import CaseRecord, Database
-from carebridge.review_gate import HumanReviewGate
-from carebridge.router import ConfidenceRouter
+from carebridge.services.review_gate import HumanReviewGate
+from carebridge.services.router import ConfidenceRouter
 from tests.fakes import FakeLLM
 
 

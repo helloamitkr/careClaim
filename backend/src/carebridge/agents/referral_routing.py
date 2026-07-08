@@ -9,7 +9,7 @@ from __future__ import annotations
 from carebridge.agents.base import Agent, AgentDecision
 from carebridge.bus import EventBus
 from carebridge.models import TransitionCase
-from carebridge.rag import KnowledgeBase, default_knowledge_base
+from carebridge.services.rag import KnowledgeBase, default_knowledge_base
 
 
 class ReferralRoutingAgent(Agent):

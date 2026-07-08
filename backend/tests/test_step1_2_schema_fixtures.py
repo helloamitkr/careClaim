@@ -1,5 +1,5 @@
 from carebridge.fixtures import ALL_FIXTURES, CASE_A_CLEAN, CASE_B_PAYER_DELAY, CASE_C_HIGH_RISK
-from carebridge.models import CaseStatus, TransitionCase
+from carebridge.models import CaseStatus
 
 
 def test_transition_case_constructs_with_defaults():

@@ -1,6 +1,13 @@
 -- ============================================================================
--- CareBridge AI — Discharge Workflow Knowledge Base (RAG seed example)
+-- Migration 004 — Discharge Workflow Knowledge Base (RAG retrieval content)
 -- ============================================================================
+--
+-- Applied by:  python dbmigration/migrate.py --with-knowledge-base
+-- Opt-in, because unlike 001-003 this file INSERTs rows.
+--
+-- What it inserts is clinical/administrative reference content the agents
+-- retrieve against — care protocols, payer rules, follow-up intervals. It
+-- contains no patients, no cases, and no sample data.
 --
 -- WHAT THIS IS
 --   One Postgres table that acts as the retrieval layer ("RAG store") for all
@@ -36,7 +43,7 @@
 --   patient X" must stay answerable.
 --
 -- LOADING
---   psql postgresql://carebridge:carebridge@localhost:5432/carebridge -f knowledegebase.sql
+--   python dbmigration/migrate.py --with-knowledge-base
 --   (idempotent — drops and recreates the table with seed data)
 --
 -- All content below is SYNTHETIC demo data, not real clinical guidance.

@@ -1,8 +1,8 @@
 from carebridge.agents.referral_routing import ReferralRoutingAgent
 from carebridge.bus import Event, EventBus
 from carebridge.fixtures import CASE_A_CLEAN, CASE_B_PAYER_DELAY, CASE_C_HIGH_RISK
-from carebridge.review_gate import HumanReviewGate
-from carebridge.router import ConfidenceRouter
+from carebridge.services.review_gate import HumanReviewGate
+from carebridge.services.router import ConfidenceRouter
 
 
 def _build_pipeline() -> tuple[EventBus, HumanReviewGate, list[Event]]:

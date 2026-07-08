@@ -3,7 +3,7 @@ lines into the compact record shape, and tailing only the end of the file."""
 
 import json
 
-from carebridge.logging_setup import parse_log_line, tail_records
+from carebridge.logging import parse_log_line, tail_records
 
 
 def _serialized_line(message: str, level: str = "INFO", **extra) -> str:

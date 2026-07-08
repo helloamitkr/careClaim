@@ -1,5 +1,5 @@
 """Step 14 — the RAG layer. Retrieval semantics on the in-memory KB, the
-same lookups against the real Postgres table (loaded from knowledegebase.sql),
+same lookups against the real Postgres table (loaded from dbmigration/004_knowledge_base.sql),
 and proof the agents actually ground their work in what was retrieved."""
 
 from pathlib import Path
@@ -13,14 +13,14 @@ from carebridge.agents.patient_outreach import PatientOutreachAgent
 from carebridge.bus import EventBus
 from carebridge.fixtures import CASE_A_CLEAN, CASE_C_HIGH_RISK
 from carebridge.persistence import Database
-from carebridge.rag import (
+from carebridge.services.rag import (
     InMemoryKnowledgeBase,
     PostgresKnowledgeBase,
     default_knowledge_base,
 )
 from tests.fakes import FakeLLM
 
-KB_SQL = Path(__file__).resolve().parents[2] / "knowledegebase.sql"
+KB_SQL = Path(__file__).resolve().parents[2] / "dbmigration" / "004_knowledge_base.sql"
 
 # --- in-memory retrieval semantics -----------------------------------------
 

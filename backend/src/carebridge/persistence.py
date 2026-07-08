@@ -9,9 +9,22 @@ from __future__ import annotations
 
 import os
 from datetime import datetime, timezone
+from pathlib import Path
 from typing import TYPE_CHECKING
 
-from sqlalchemy import JSON, DateTime, Float, ForeignKey, Integer, String, Text, create_engine
+from loguru import logger
+from sqlalchemy import (
+    JSON,
+    DateTime,
+    Float,
+    ForeignKey,
+    Integer,
+    String,
+    Text,
+    create_engine,
+    text,
+)
+from sqlalchemy.exc import OperationalError, ProgrammingError
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, sessionmaker
 
 if TYPE_CHECKING:
@@ -68,14 +81,65 @@ class Database:
 
     def init_schema(self) -> None:
         from carebridge.audit import AuditLogRecord  # noqa: F401 — registers audit_log on Base
+        from carebridge.services.workflow import CaseWorkflow  # noqa: F401 — registers case_workflow on Base
 
         Base.metadata.create_all(self.engine)
+        self.apply_security_policies()
 
     def reset_schema(self) -> None:
         from carebridge.audit import AuditLogRecord  # noqa: F401 — registers audit_log on Base
+        from carebridge.services.workflow import CaseWorkflow  # noqa: F401 — registers case_workflow on Base
 
+        # portal.portal_case_view depends on `cases`, so drop_all cannot proceed
+        # while it exists. apply_security_policies() recreates it below.
+        self._drop_portal_view()
         Base.metadata.drop_all(self.engine)
         Base.metadata.create_all(self.engine)
+        self.apply_security_policies()
+
+    # Both depend on `cases`, so drop_all cannot proceed while they exist, and
+    # both are recreated by apply_security_policies().
+    _PORTAL_VIEWS = ("portal.portal_case_reason_view", "portal.portal_case_view")
+
+    # Re-applied in order after every create_all(). 006 grants on agent_decisions,
+    # which create_all() recreates without them, so it must run again too.
+    _SECURITY_MIGRATIONS = ("003_rls_and_portal_view.sql", "006_portal_reason_view.sql")
+
+    def _drop_portal_view(self) -> None:
+        try:
+            with self.engine.begin() as conn:
+                for view in self._PORTAL_VIEWS:
+                    conn.execute(text(f"DROP VIEW IF EXISTS {view}"))
+        except (ProgrammingError, OperationalError):
+            pass  # no portal schema yet, or no rights — drop_all will tell us
+
+    def apply_security_policies(self) -> None:
+        """Re-apply the RLS + portal-view migrations after any create_all().
+
+        DROP TABLE takes its RLS policies, the portal views, and their grants down
+        with it, so a reset_schema() in a test would silently leave the portal's
+        row-level security switched off — the worst kind of failure, because
+        everything keeps working. Re-running the (idempotent) DDL here means the
+        boundary cannot be lost by accident.
+
+        No-ops with a warning when the roles from step 002 have not been created
+        yet, so a fresh clone still starts.
+        """
+        migrations = Path(__file__).resolve().parents[3] / "dbmigration"
+        try:
+            for filename in self._SECURITY_MIGRATIONS:
+                sql_path = migrations / filename
+                if not sql_path.exists():
+                    continue
+                with self.engine.begin() as conn:
+                    conn.execute(text(sql_path.read_text()))
+        except (ProgrammingError, OperationalError) as exc:
+            logger.bind(component="db").warning(
+                "row-level security NOT applied ({err}). The patient portal must "
+                "not be exposed until `python dbmigration/migrate.py` has been run "
+                "as a superuser.",
+                err=type(exc).__name__,
+            )
 
     def upsert_case(self, case: "TransitionCase") -> None:
         now = datetime.now(timezone.utc)
