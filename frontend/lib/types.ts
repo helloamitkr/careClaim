@@ -95,3 +95,17 @@ export interface Stats {
   reviews: Record<string, number>;
   agents: AgentStats[];
 }
+
+export interface BulkIngestItem {
+  index: number;
+  case_id: string | null;
+  accepted: boolean;
+  error: string | null;
+}
+
+export interface BulkIngestResult {
+  total: number;
+  accepted: number;
+  rejected: number;
+  results: BulkIngestItem[];
+}

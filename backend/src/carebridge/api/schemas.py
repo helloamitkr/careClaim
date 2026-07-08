@@ -174,3 +174,20 @@ class StatsOut(BaseModel):
     avg_review_wait_ms: float | None
     reviews: dict[str, int]  # approved / overridden / rejected counts
     agents: list[AgentStatsOut]
+
+
+class BulkIngestItemOut(BaseModel):
+    index: int
+    case_id: str | None = None  # None when rejected before a case existed
+    accepted: bool
+    error: str | None = None  # rejection reason (guardrail violation, duplicate id)
+
+
+class BulkIngestOut(BaseModel):
+    """Result of an array ingest. Accepted cases are queued and processed in
+    the background — watch them move on the case list / pipeline steps."""
+
+    total: int
+    accepted: int
+    rejected: int
+    results: list[BulkIngestItemOut]

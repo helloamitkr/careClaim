@@ -54,6 +54,64 @@ def test_create_clean_case_auto_completes(client):
     assert detail["pending_review"] is None
 
 
+def test_bulk_ingest_mixed_batch(client):
+    import time
+    from datetime import date, timedelta
+
+    suffix = uuid4().hex[:6]
+    base = {
+        "discharge_date": date.today().isoformat(),
+        "discharge_disposition": "home",
+        "primary_diagnosis": "Pneumonia, resolved",
+        "has_pcp_on_file": True,
+        "payer": "Aetna",
+        "referral_specialty": "pulmonology",
+    }
+    good_a = {**base, "case_id": f"bulk-a-{suffix}"}
+    good_b = {**base, "case_id": f"bulk-b-{suffix}"}
+    bad_date = {**base, "discharge_date": (date.today() + timedelta(days=90)).isoformat()}
+    dupe_in_batch = {**base, "case_id": f"bulk-a-{suffix}"}
+
+    response = client.post("/api/cases/ingest", json=[good_a, good_b, bad_date, dupe_in_batch])
+    assert response.status_code == 200
+    body = response.json()
+    assert (body["total"], body["accepted"], body["rejected"]) == (4, 2, 2)
+    assert body["results"][0]["accepted"] and body["results"][1]["accepted"]
+    assert "guardrail" in body["results"][2]["error"]
+    assert "duplicate" in body["results"][3]["error"]
+
+    # accepted cases finish in the background — poll until both close
+    deadline = time.time() + 120
+    final = {"auto_completed", "needs_review", "completed", "rejected"}
+    while time.time() < deadline:
+        statuses = {
+            client.get(f"/api/cases/{cid}").json()["case"]["status"]
+            for cid in (good_a["case_id"], good_b["case_id"])
+        }
+        if statuses <= final:
+            break
+        time.sleep(1)
+    assert statuses <= final, f"bulk cases never finished: {statuses}"
+
+
+def test_single_ingest_still_returns_final_status(client):
+    from datetime import date
+
+    response = client.post(
+        "/api/cases/ingest",
+        json={
+            "discharge_date": date.today().isoformat(),
+            "discharge_disposition": "home",
+            "primary_diagnosis": "Type 2 diabetes, controlled",
+            "has_pcp_on_file": True,
+            "payer": "Medicare",
+            "referral_specialty": "endocrinology",
+        },
+    )
+    assert response.status_code == 200
+    assert response.json()["status"] == "auto_completed"  # sync path unchanged
+
+
 def test_stats_aggregates_reflect_processed_cases(client):
     client.post("/api/cases", json={"template": "clean"})  # ensure at least one case
 
@@ -176,10 +234,12 @@ def test_ingest_missing_required_field_returns_422_with_field_detail(client):
         json={"discharge_date": "2026-07-10", "discharge_disposition": "home"},
     )
     assert response.status_code == 422
-    fields_with_errors = {tuple(e["loc"]) for e in response.json()["detail"]}
-    assert ("body", "primary_diagnosis") in fields_with_errors
-    assert ("body", "has_pcp_on_file") in fields_with_errors
-    assert ("body", "payer") in fields_with_errors
+    # The single-or-array union nests field errors one level deeper
+    # (body → IngestCaseRequest → field), so key off the last segment.
+    fields_with_errors = {e["loc"][-1] for e in response.json()["detail"]}
+    assert "primary_diagnosis" in fields_with_errors
+    assert "has_pcp_on_file" in fields_with_errors
+    assert "payer" in fields_with_errors
 
 
 def test_ingest_duplicate_case_id_returns_409(client):

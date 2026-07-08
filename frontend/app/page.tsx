@@ -44,6 +44,23 @@ export default function CaseListPage() {
     };
   }, []);
 
+  // Bulk-ingested cases process in the background — poll while any case is
+  // mid-pipeline, plus a ~20s burst after an ingest so rows that appear a
+  // beat after the response are never missed. Self-terminates: each refresh
+  // re-evaluates the condition.
+  const [pollUntil, setPollUntil] = useState(0);
+  const handleCreated = useCallback(() => {
+    refresh();
+    setPollUntil(Date.now() + 20000);
+  }, [refresh]);
+
+  useEffect(() => {
+    const active = cases?.some((c) => c.status === "received" || c.status === "in_progress");
+    if (!active && Date.now() >= pollUntil) return;
+    const timer = setInterval(refresh, 2500);
+    return () => clearInterval(timer);
+  }, [cases, pollUntil, refresh]);
+
   async function handleNewDischarge(templateKey: string) {
     setCreatingTemplate(templateKey);
     setError(null);
@@ -125,14 +142,14 @@ export default function CaseListPage() {
         {error && <p className="mt-4 text-sm text-red-600 dark:text-red-400">{error}</p>}
 
         {ingestOpen && (
-          <IngestModal onClose={() => setIngestOpen(false)} onCreated={refresh} />
+          <IngestModal onClose={() => setIngestOpen(false)} onCreated={handleCreated} />
         )}
         {previewFixture && (
           <IngestModal
             title={`Data behind “${previewFixture.label}”`}
             initialJson={JSON.stringify(previewFixture.sample, null, 2)}
             onClose={() => setPreviewFixture(null)}
-            onCreated={refresh}
+            onCreated={handleCreated}
           />
         )}
       </section>

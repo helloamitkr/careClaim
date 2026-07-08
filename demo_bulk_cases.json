@@ -1,0 +1,152 @@
+[
+  {
+    "patient_id": "case-001",
+    "discharge_date": "2026-07-10",
+    "discharge_disposition": "home",
+    "primary_diagnosis": "Pneumonia, resolved",
+    "has_pcp_on_file": true,
+    "payer": "Aetna",
+    "referral_specialty": "pulmonology",
+    "risk_flags": []
+  },
+  {
+    "patient_id": "case-002",
+    "discharge_date": "2026-07-10",
+    "discharge_disposition": "home",
+    "primary_diagnosis": "Heart Failure Exacerbation",
+    "has_pcp_on_file": true,
+    "payer": "Medicare",
+    "referral_specialty": "cardiology",
+    "risk_flags": ["high_readmission_risk", "recent_ed_visit"]
+  },
+  {
+    "patient_id": "case-003",
+    "discharge_date": "2026-07-11",
+    "discharge_disposition": "home",
+    "primary_diagnosis": "Type 2 Diabetes",
+    "has_pcp_on_file": false,
+    "payer": "Aetna",
+    "referral_specialty": "endocrinology",
+    "risk_flags": []
+  },
+  {
+    "patient_id": "case-004",
+    "discharge_date": "2026-07-11",
+    "discharge_disposition": "home_health",
+    "primary_diagnosis": "Stroke",
+    "has_pcp_on_file": true,
+    "payer": "UnitedHealthcare",
+    "referral_specialty": "neurology",
+    "risk_flags": ["needs_home_health"]
+  },
+  {
+    "patient_id": "case-005",
+    "discharge_date": "2026-07-12",
+    "discharge_disposition": "other",
+    "primary_diagnosis": "Hip Fracture",
+    "has_pcp_on_file": true,
+    "payer": "Cigna",
+    "referral_specialty": "orthopedics",
+    "risk_flags": ["fall_risk", "limited_mobility"]
+  },
+  {
+    "patient_id": "case-006",
+    "discharge_date": "2026-07-12",
+    "discharge_disposition": "other",
+    "primary_diagnosis": "Cellulitis",
+    "has_pcp_on_file": false,
+    "payer": "Self Pay",
+    "referral_specialty": "infectious_disease",
+    "risk_flags": ["left_against_medical_advice"]
+  },
+  {
+    "patient_id": "case-007",
+    "discharge_date": "2026-07-13",
+    "discharge_disposition": "home",
+    "primary_diagnosis": "COPD",
+    "has_pcp_on_file": true,
+    "payer": "Blue Cross Blue Shield",
+    "referral_specialty": "pulmonology",
+    "risk_flags": ["oxygen_required"]
+  },
+  {
+    "patient_id": "case-008",
+    "discharge_date": "2026-07-13",
+    "discharge_disposition": "snf",
+    "primary_diagnosis": "Sepsis Recovery",
+    "has_pcp_on_file": true,
+    "payer": "Humana",
+    "referral_specialty": "infectious_disease",
+    "risk_flags": ["recent_icu_stay", "high_readmission_risk"]
+  },
+  {
+    "patient_id": "case-009",
+    "discharge_date": "2026-07-14",
+    "discharge_disposition": "home",
+    "primary_diagnosis": "Acute Kidney Injury, resolved",
+    "has_pcp_on_file": true,
+    "payer": "Kaiser Permanente",
+    "referral_specialty": "nephrology",
+    "risk_flags": []
+  },
+  {
+    "patient_id": "case-010",
+    "discharge_date": "2026-07-14",
+    "discharge_disposition": "home",
+    "primary_diagnosis": "Hypertension",
+    "has_pcp_on_file": false,
+    "payer": "Medicaid",
+    "referral_specialty": "cardiology",
+    "risk_flags": ["missing_followup"]
+  },
+  {
+    "patient_id": "case-011",
+    "discharge_date": "2026-07-15",
+    "discharge_disposition": "home",
+    "primary_diagnosis": "Asthma Exacerbation",
+    "has_pcp_on_file": true,
+    "payer": "Aetna",
+    "referral_specialty": "pulmonology",
+    "risk_flags": []
+  },
+  {
+    "patient_id": "case-012",
+    "discharge_date": "2026-07-15",
+    "discharge_disposition": "home",
+    "primary_diagnosis": "Myocardial Infarction",
+    "has_pcp_on_file": true,
+    "payer": "Medicare",
+    "referral_specialty": "cardiology",
+    "risk_flags": ["high_readmission_risk", "cardiac_rehab_required"]
+  },
+  {
+    "patient_id": "case-013",
+    "discharge_date": "2026-07-16",
+    "discharge_disposition": "snf",
+    "primary_diagnosis": "Advanced Dementia",
+    "has_pcp_on_file": true,
+    "payer": "Medicaid",
+    "referral_specialty": "geriatrics",
+    "risk_flags": ["cognitive_impairment", "caregiver_support_needed"]
+  },
+  {
+    "patient_id": "case-014",
+    "discharge_date": "2026-07-16",
+    "discharge_disposition": "home",
+    "primary_diagnosis": "Post Appendectomy",
+    "has_pcp_on_file": true,
+    "payer": "Cigna",
+    "referral_specialty": "general_surgery",
+    "risk_flags": []
+  },
+  {
+    "patient_id": "case-015",
+    "discharge_date": "2026-07-17",
+    "discharge_disposition": "home",
+    "primary_diagnosis": "COVID-19 Pneumonia",
+    "has_pcp_on_file": true,
+    "payer": "UnitedHealthcare",
+    "referral_specialty": "pulmonology",
+    "risk_flags": ["oxygen_required", "high_readmission_risk"]
+  }
+]

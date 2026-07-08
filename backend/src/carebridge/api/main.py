@@ -89,6 +89,7 @@ async def lifespan(app: FastAPI):
     app.state.db = db
     app.state.bus = bus
     app.state.gate = gate
+    app.state.bulk_tasks = set()  # keeps background batch tasks alive until done
     yield
 
 
@@ -205,20 +206,10 @@ async def create_case(body: schemas.CreateCaseRequest) -> schemas.CaseCreatedOut
     return schemas.CaseCreatedOut(case_id=case.case_id, status=row.status)
 
 
-@app.post("/api/cases/ingest", response_model=schemas.CaseCreatedOut)
-async def ingest_case(body: schemas.IngestCaseRequest) -> schemas.CaseCreatedOut:
-    """Manual front door to the EHR normalization layer — paste JSON in
-    roughly TransitionCase shape and it runs through the same pipeline as
-    a real feed would."""
+def _case_from_ingest(body: schemas.IngestCaseRequest) -> TransitionCase:
     now = datetime.now(timezone.utc)
-    case_id = body.case_id or f"case-{uuid4().hex[:8]}"
-
-    with app.state.db.Session() as session:
-        if session.get(CaseRecord, case_id) is not None:
-            raise HTTPException(status_code=409, detail=f"Case '{case_id}' already exists")
-
-    case = TransitionCase(
-        case_id=case_id,
+    return TransitionCase(
+        case_id=body.case_id or f"case-{uuid4().hex[:8]}",
         patient_id=body.patient_id or f"patient-{uuid4().hex[:6]}",
         admitting_facility=body.admitting_facility,
         discharge_date=body.discharge_date,
@@ -232,6 +223,99 @@ async def ingest_case(body: schemas.IngestCaseRequest) -> schemas.CaseCreatedOut
         source_message_id=body.source_message_id or f"manual-ingest-{uuid4().hex[:8]}",
         received_at=body.received_at or now,
     )
+
+
+MAX_BULK_CASES = 100
+
+
+async def _ingest_bulk(items: list[schemas.IngestCaseRequest]) -> schemas.BulkIngestOut:
+    """Array ingest: every item is validated and guardrail-checked up front —
+    one bad row never sinks the batch. Accepted cases are queued and the
+    pipeline runs them in the background (the LLM agents take seconds per
+    case; a synchronous batch would time the request out), so the response
+    returns immediately and progress is visible on the case list."""
+    if not items:
+        raise HTTPException(status_code=422, detail="Empty array — nothing to ingest")
+    if len(items) > MAX_BULK_CASES:
+        raise HTTPException(
+            status_code=422, detail=f"Batch too large: {len(items)} > {MAX_BULK_CASES} cases"
+        )
+
+    results: list[schemas.BulkIngestItemOut] = []
+    accepted: list[TransitionCase] = []
+    seen_ids: set[str] = set()
+
+    with app.state.db.Session() as session:
+        for index, item in enumerate(items):
+            case = _case_from_ingest(item)
+
+            if case.case_id in seen_ids:
+                results.append(schemas.BulkIngestItemOut(
+                    index=index, case_id=case.case_id, accepted=False,
+                    error=f"duplicate case_id '{case.case_id}' within this batch",
+                ))
+                continue
+            if session.get(CaseRecord, case.case_id) is not None:
+                results.append(schemas.BulkIngestItemOut(
+                    index=index, case_id=case.case_id, accepted=False,
+                    error=f"case '{case.case_id}' already exists",
+                ))
+                continue
+
+            report = InputGuardrail().check(case)
+            if not report.passed:
+                results.append(schemas.BulkIngestItemOut(
+                    index=index, case_id=case.case_id, accepted=False,
+                    error=f"input guardrail: {'; '.join(report.violations)}",
+                ))
+                continue
+
+            seen_ids.add(case.case_id)
+            accepted.append(report.case)
+            results.append(
+                schemas.BulkIngestItemOut(index=index, case_id=case.case_id, accepted=True)
+            )
+
+    bus: EventBus = app.state.bus
+
+    async def run_batch() -> None:
+        # Sequential on purpose: the local LLM serializes requests anyway,
+        # and one case at a time keeps the live log stream readable.
+        for case in accepted:
+            await bus.publish(Event(event_type="case.created", case=case))
+
+    task = asyncio.create_task(run_batch())
+    app.state.bulk_tasks.add(task)
+    task.add_done_callback(app.state.bulk_tasks.discard)
+
+    logger.bind(component="ingest").info(
+        "bulk ingest: {accepted}/{total} accepted, {rejected} rejected — pipeline running in background",
+        accepted=len(accepted), total=len(items), rejected=len(items) - len(accepted),
+    )
+    return schemas.BulkIngestOut(
+        total=len(items),
+        accepted=len(accepted),
+        rejected=len(items) - len(accepted),
+        results=results,
+    )
+
+
+@app.post("/api/cases/ingest", response_model=schemas.CaseCreatedOut | schemas.BulkIngestOut)
+async def ingest_case(
+    body: schemas.IngestCaseRequest | list[schemas.IngestCaseRequest],
+) -> schemas.CaseCreatedOut | schemas.BulkIngestOut:
+    """Manual front door to the EHR normalization layer. A single JSON
+    object runs the pipeline synchronously and returns the final status;
+    a JSON array is bulk mode — validated up front, processed in the
+    background, per-item results returned immediately."""
+    if isinstance(body, list):
+        return await _ingest_bulk(body)
+
+    with app.state.db.Session() as session:
+        if body.case_id and session.get(CaseRecord, body.case_id) is not None:
+            raise HTTPException(status_code=409, detail=f"Case '{body.case_id}' already exists")
+
+    case = _case_from_ingest(body)
 
     # Step 11 — input guardrail. Manual ingest is the one untrusted front
     # door, so hard violations reject here (the diagram's "Reject" branch)

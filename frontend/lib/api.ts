@@ -23,7 +23,12 @@ function formatApiError(status: number, body: string): string {
       if (Array.isArray(detail)) {
         return (detail as FastApiValidationError[])
           .map((e) => {
-            const field = e.loc && e.loc.length > 1 ? e.loc.slice(1).join(".") : "body";
+            // Drop "body" and union-member type names (IngestCaseRequest,
+            // list[IngestCaseRequest]) — keep only real field segments.
+            const segments = (e.loc ?? []).filter(
+              (s) => typeof s === "number" || (s !== "body" && !/^[A-Z]|\[/.test(String(s))),
+            );
+            const field = segments.length ? segments.join(".") : "body";
             return `${field}: ${e.msg ?? "invalid"}`;
           })
           .join("\n");
@@ -88,4 +93,13 @@ export function reviewCase(
 
 export function getStats(): Promise<import("./types").Stats> {
   return request("/api/stats");
+}
+
+export function ingestBulk(
+  cases: unknown[],
+): Promise<import("./types").BulkIngestResult> {
+  return request("/api/cases/ingest", {
+    method: "POST",
+    body: JSON.stringify(cases),
+  });
 }
