@@ -78,7 +78,7 @@ def sanitize(reply: str, *, case_id: str) -> str:
     cleaned, redactions = scrub_pii(reply.strip())
 
     if redactions:
-        logger.bind(component="portal.chat", case_id=case_id).warning(
+        logger.bind(component="portal.bot", case_id=case_id).warning(
             "PII scrubbed from an assistant reply: {names}", names=", ".join(redactions)
         )
 
@@ -87,7 +87,7 @@ def sanitize(reply: str, *, case_id: str) -> str:
 
     leaked = violations(cleaned)
     if leaked:
-        logger.bind(component="portal.chat", case_id=case_id).warning(
+        logger.bind(component="portal.bot", case_id=case_id).warning(
             "assistant reply discarded — internal vocabulary leaked: {patterns}",
             patterns="; ".join(leaked),
         )

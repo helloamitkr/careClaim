@@ -19,9 +19,9 @@ from loguru import logger
 
 from carebridge.portal import auth, repository
 from carebridge.portal.audit import AuditWriteError, PhiAccessAudit
-from carebridge.portal.chat import context as chat_context
-from carebridge.portal.chat import intent
-from carebridge.portal.chat.answer import answer_status_question
+from carebridge.portal.bot import context as bot_context
+from carebridge.portal.bot import intent
+from carebridge.portal.bot.answer import answer_status_question
 from carebridge.portal.schemas import (
     ChatMessageIn,
     ChatReplyOut,
@@ -327,7 +327,7 @@ async def chat(
     """Ask the assistant why this case is held up.
 
     The four controls, in the order this function applies them, are described in
-    carebridge/portal/chat/__init__.py. Note especially that the clinical-question
+    carebridge/portal/bot/__init__.py. Note especially that the clinical-question
     refusal happens before any context is fetched: a patient asking "should I stop
     my beta blocker?" never causes a PHI read at all.
     """
@@ -356,7 +356,7 @@ async def chat(
         return ChatReplyOut(reply=intent.CARE_TEAM_REFUSAL, refused=True)
 
     # (3) RLS-bounded. None for "no such case" and for "not yours", alike.
-    context = chat_context.fetch_case_context(session.patient_id, case_id)
+    context = bot_context.fetch_case_context(session.patient_id, case_id)
 
     try:
         _audit().record(
