@@ -431,9 +431,9 @@ trusts the model.**
 | # | Failure | Control | Where |
 |---|---|---|---|
 | 1 | Reads another patient's case | No `patient_id` in the route; session supplies it | `routes.py` |
-| 2 | Gives medical advice | Deterministic refusal **before** the model runs | `chat/intent.py` |
+| 2 | Gives medical advice | Deterministic refusal **before** the model runs | `bot/intent.py` |
 | 3 | Prompt injection reaches other data | Context is RLS-bounded before the model sees it | migration 006 |
-| 4 | Echoes internal vocabulary | Reply discarded — never repaired — if it does | `chat/redact.py` |
+| 4 | Echoes internal vocabulary | Reply discarded — never repaired — if it does | `bot/redact.py` |
 
 ### Why the refusal is not a system prompt
 

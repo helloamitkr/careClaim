@@ -13,10 +13,10 @@ import pytest
 from sqlalchemy import text
 from sqlalchemy.exc import OperationalError, SQLAlchemyError
 
-from carebridge.portal.chat import intent, redact
-from carebridge.portal.chat.answer import answer_status_question
-from carebridge.portal.chat.context import CaseContext, Reason, fetch_case_context
-from carebridge.portal.chat.redact import FALLBACK
+from carebridge.portal.bot import intent, redact
+from carebridge.portal.bot.answer import answer_status_question
+from carebridge.portal.bot.context import CaseContext, Reason, fetch_case_context
+from carebridge.portal.bot.redact import FALLBACK
 
 
 class FakeLLM:

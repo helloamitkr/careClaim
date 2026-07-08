@@ -89,7 +89,7 @@ def _row(r) -> PortalCaseRow:
 def scoped_to_patient(conn, session_patient_id: str) -> None:
     """Bind this transaction to one patient, for RLS.
 
-    Public because the chat assistant's read path (portal/chat/context.py) needs
+    Public because the chat assistant's read path (portal/bot/context.py) needs
     the same binding against a different view. Every portal connection that
     touches clinical data calls this first; forgetting to means the view returns
     zero rows, not everybody's.

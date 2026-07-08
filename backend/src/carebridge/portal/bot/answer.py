@@ -20,8 +20,8 @@ from functools import lru_cache
 from loguru import logger
 
 from carebridge.llm import LLMClient, create_llm_client
-from carebridge.portal.chat.context import CaseContext
-from carebridge.portal.chat.redact import FALLBACK, sanitize
+from carebridge.portal.bot.context import CaseContext
+from carebridge.portal.bot.redact import FALLBACK, sanitize
 
 _SYSTEM = """\
 You are a hospital discharge-plan status assistant, writing to a patient about \
@@ -90,7 +90,7 @@ def answer_status_question(
     except Exception as exc:  # vendor error, timeout, auth — all the same to the patient
         # The message may name the vendor and the model; it cannot contain PHI,
         # because we never send the exception body anywhere near the response.
-        logger.bind(component="portal.chat", case_id=context.case_id).error(
+        logger.bind(component="portal.bot", case_id=context.case_id).error(
             "LLM call failed, serving fallback: {err}", err=type(exc).__name__
         )
         return FALLBACK
