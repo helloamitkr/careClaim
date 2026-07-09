@@ -375,5 +375,7 @@ async def chat(
     if context is None:
         raise HTTPException(status_code=404, detail="Case not found")
 
-    # (4) sanitize() runs inside answer_status_question().
-    return ChatReplyOut(reply=answer_status_question(context, question), refused=False)
+    # (4) sanitize() runs inside answer_status_question(). `refused` is also set
+    # there, when the model classifies the question as not about the care plan.
+    answer = answer_status_question(context, question)
+    return ChatReplyOut(reply=answer.text, refused=answer.refused)

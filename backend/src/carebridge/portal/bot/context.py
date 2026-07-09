@@ -20,6 +20,16 @@ from carebridge.guardrails import scrub_pii
 from carebridge.portal.repository import portal_engine, scoped_to_patient
 
 
+ESCALATION_THRESHOLD = 0.75
+
+# risk_escalation contributes no clinical reason. Its rationale is the pipeline's
+# own arithmetic — "composite confidence set by weakest signal(s) —
+# discharge_readiness (0.3)" — which restates the other agents in exactly the
+# vocabulary redact.py exists to keep away from patients. drafting.py excludes it
+# from the clinician draft for the same reason. It never reaches the model.
+INTERNAL_AGENTS = frozenset({"risk_escalation"})
+
+
 @dataclass(frozen=True)
 class Reason:
     agent_name: str
@@ -38,13 +48,20 @@ class CaseContext:
 
     @property
     def blockers(self) -> tuple[Reason, ...]:
-        """The agents that were unsure. These are what a patient is asking about.
+        """The agents that were unsure. These, and only these, are the hold-up.
 
-        0.75 is the ConfidenceRouter's escalation threshold — below it, a human
-        is asked to look. Using the same number here means the assistant explains
+        0.75 is the ConfidenceRouter's escalation threshold — below it, a human is
+        asked to look. Using the same number here means the assistant explains
         exactly the signals that caused the hold-up, not an arbitrary subset.
+
+        An empty tuple is a real answer, not a missing one: it means nothing is
+        blocking the plan. The caller must not fall back to `reasons` — a case
+        with no blockers would then hand the model six irrelevant notes, including
+        the medication regimen, and it would narrate them as if they explained a
+        delay. That is where "a follow-up with a heart specialist has already been
+        arranged" came from when a patient asked why their plan was late.
         """
-        return tuple(r for r in self.reasons if r.confidence < 0.75)
+        return tuple(r for r in self.reasons if r.confidence < ESCALATION_THRESHOLD)
 
 
 def fetch_case_context(session_patient_id: str, case_id: str) -> CaseContext | None:
@@ -79,5 +96,6 @@ def fetch_case_context(session_patient_id: str, case_id: str) -> CaseContext | N
                 rationale=scrub_pii(r.rationale)[0],
             )
             for r in rows
+            if r.agent_name not in INTERNAL_AGENTS
         ),
     )

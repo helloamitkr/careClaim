@@ -24,6 +24,21 @@ CARE_TEAM_REFUSAL = (
     "if this is an emergency, call your local emergency number."
 )
 
+# Served when the model returns the OFF_TOPIC sentinel (see answer.py).
+#
+# Unlike the clinical refusal above, off-topic cannot be caught by pattern — there
+# is no regex for "I want to dance", and the set of things a person might say is
+# not enumerable. So the model classifies and Python decides what is said. The
+# model never authors the reply; that is the half that must not vary.
+#
+# This is the weaker of the two refusals, and deliberately so: a missed off-topic
+# question wastes a patient's time, while a missed clinical question could hurt
+# them. The clinical filter therefore stays in Python, ahead of the model.
+OFF_TOPIC_REPLY = (
+    "I can only help with your care plan — where it stands and what happens next. "
+    "For anything else, please contact your care team."
+)
+
 # Matched against the lowercased message. Word-boundary anchored so "dose" does
 # not fire on "diagnosed" and "med" does not fire on "medium".
 _CLINICAL_PATTERNS: tuple[re.Pattern[str], ...] = tuple(
